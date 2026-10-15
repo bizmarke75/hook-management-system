@@ -1,13 +1,14 @@
 import os
 import sys
-import io
 import re
 import wave
 import pathlib
 import datetime
 import logging
+import struct
+import io
 
-# Prevent PyInstaller --noconsole NoneType stdout/stderr crashes
+# Fix PyInstaller --noconsole sys.stdout/sys.stderr NoneType error
 if sys.stdout is None:
     sys.stdout = io.StringIO()
 if sys.stderr is None:
@@ -22,10 +23,10 @@ except ImportError:
     HAS_TKINTER = False
 
 # System Revision Definition
-HMS_REV = "v2.6.2"
+HMS_REV = "v2.7.0"
 
 class HMSLogger:
-    """Handles dual logging to GUI text widget and file safely in both console and GUI modes."""
+    """Handles dual logging to GUI text widget and file."""
     def __init__(self, log_widget=None, log_file_path=r"C:\renders\hms_workflow.log"):
         self.log_widget = log_widget
         self.log_file_path = log_file_path
@@ -40,12 +41,11 @@ class HMSLogger:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted = f"[{timestamp}] [{HMS_REV}] [{level}] {message}"
         
-        # Print to stdout safely if available
-        if sys.stdout is not None:
-            try:
-                print(formatted)
-            except Exception:
-                pass
+        # Safe stdout write
+        try:
+            print(formatted)
+        except Exception:
+            pass
         
         # Append to log file
         try:
@@ -54,12 +54,11 @@ class HMSLogger:
         except Exception:
             pass
             
-        # Update GUI console widget if present
+        # Update GUI if present
         if self.log_widget and HAS_TKINTER:
             try:
                 self.log_widget.insert(tk.END, formatted + "\n")
                 self.log_widget.see(tk.END)
-                self.log_widget.update_idletasks()
             except Exception:
                 pass
 
@@ -96,6 +95,31 @@ def win_to_uri(path_str):
     if not clean.startswith('/'):
         clean = '/' + clean
     return f"file://localhost{clean}"
+
+def get_mp4_duration(filepath):
+    """Reads exact MP4 duration in seconds using standard library struct."""
+    try:
+        with open(filepath, "rb") as f:
+            data = f.read()
+        idx = data.find(b"mvhd")
+        if idx == -1:
+            return 10.0
+        version = data[idx + 4]
+        if version == 0:
+            timescale, duration = struct.unpack(">II", data[idx + 16 : idx + 24])
+        else:
+            timescale, duration = struct.unpack(">IQ", data[idx + 24 : idx + 36])
+        return duration / float(timescale) if timescale > 0 else 10.0
+    except Exception:
+        return 10.0
+
+def get_wav_duration(filepath):
+    """Reads WAV file duration in seconds."""
+    try:
+        with wave.open(str(filepath), "rb") as wf:
+            return wf.getnframes() / float(wf.getframerate())
+    except Exception:
+        return 40.0
 
 class HMSPipelineEngine:
     """Core workflow engine executing steps sequentially."""
@@ -238,7 +262,7 @@ class HMSPipelineEngine:
         return True
 
     def run_step_4_generate_xml(self):
-        """Step 4: Build FCP 7 XML (xmeml v5) with revision tracking metadata."""
+        """Step 4: Build FCP 7 XML (xmeml v5) with dynamic shot scanning and fixed media attributes."""
         self.logger.log("--- STEP 4: GENERATING FCP 7 XML FOR DAVINCI RESOLVE ---")
         slug = self.cfg["track_slug"]
         title = self.cfg["track_title"]
@@ -249,22 +273,29 @@ class HMSPipelineEngine:
         hook_start_sec = self.cfg["hook_start_sec"]
         beat_timestamps = self.cfg.get("beat_timestamps", [])
 
-        # Default shot list
-        shots = [
-            {"filename": "shot1.mp4", "duration_sec": 5.7083},
-            {"filename": "shot2.mp4", "duration_sec": 8.0000},
-            {"filename": "shot3.mp4", "duration_sec": 10.0000},
-            {"filename": "shot4.mp4", "duration_sec": 8.0000},
-            {"filename": "shot5.mp4", "duration_sec": 8.2917},
-        ]
+        # Dynamic shot scanning in video_dir
+        shot_files = []
+        if os.path.exists(video_dir):
+            all_mp4s = [f for f in os.listdir(video_dir) if f.lower().endswith('.mp4')]
+            def shot_sort_key(f):
+                m = re.search(r'shot(\d+)', f, re.IGNORECASE)
+                return (int(m.group(1)), f) if m else (999, f)
+            shot_files = sorted(all_mp4s, key=shot_sort_key)
+
+        if not shot_files:
+            shot_files = ["shot1.mp4", "shot2.mp4", "shot3.mp4", "shot4.mp4"]
+            self.logger.log("No MP4 clips found in folder. Using default shot placeholders.", "WARNING")
 
         clips_data = []
         total_video_frames = 0
-        for shot in shots:
-            frames = round(shot["duration_sec"] * fps)
-            fpath = os.path.join(video_dir, shot["filename"])
-            clips_data.append({"filename": shot["filename"], "path": fpath, "frames": frames})
+        for fname in shot_files:
+            fpath = os.path.join(video_dir, fname)
+            dur_sec = get_mp4_duration(fpath) if os.path.exists(fpath) else 10.0
+            frames = round(dur_sec * fps)
+            clips_data.append({"filename": fname, "path": fpath, "frames": frames, "dur_sec": dur_sec})
             total_video_frames += frames
+
+        self.logger.log(f"Detected {len(clips_data)} MP4 shot(s) in project folder ({total_video_frames/fps:.2f}s total video duration).")
 
         hook_start_frames = round(hook_start_sec * fps)
         hook_end_sec = hook_start_sec + (total_video_frames / fps)
@@ -284,7 +315,7 @@ class HMSPipelineEngine:
             audio_out_frame = hook_start_frames + total_video_frames
             self.logger.log(f"Using Master Audio File with offset: {master_audio}")
 
-        # Construct XML with Rev Tags
+        # Construct XML with Rev Tags & Correct File Duration/Media Properties to Prevent Freeze-Frame Bug
         xml = [
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<!DOCTYPE xmeml>',
@@ -320,7 +351,12 @@ class HMSPipelineEngine:
                 f'              <name>{clip["filename"]}</name>',
                 f'              <pathurl>{file_uri}</pathurl>',
                 f'              <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-                '              <media><video/></media>',
+                f'              <duration>{dur}</duration>',
+                '              <media>',
+                '                <video>',
+                '                  <samplecharacteristics><width>1280</width><height>720</height></samplecharacteristics>',
+                '                </video>',
+                '              </media>',
                 '            </file>',
                 '          </clipitem>'
             ])
@@ -342,7 +378,12 @@ class HMSPipelineEngine:
             f'              <name>{audio_filename}</name>',
             f'              <pathurl>{audio_uri}</pathurl>',
             f'              <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-            '              <media><audio/></media>',
+            f'              <duration>{audio_out_frame}</duration>',
+            '              <media>',
+            '                <audio>',
+            '                  <samplecharacteristics><depth>16</depth><samplerate>44100</samplerate></samplecharacteristics>',
+            '                </audio>',
+            '              </media>',
             '            </file>',
             '            <marker>',
             f'              <name>SYSTEM_REV: {rev}</name>',
@@ -394,7 +435,7 @@ class HMSPipelineEngine:
             f.write("\n".join(xml))
 
         self.logger.log(f"✅ SUCCESS! Created FCP 7 XML: {xml_out}")
-        self.logger.log(f"🎯 Embedded Rev Tag '{rev}' and {marker_count} beat markers!")
+        self.logger.log(f"🎯 Embedded Rev Tag '{rev}' and {marker_count} beat markers across {len(clips_data)} shots!")
         return True
 
     def execute_full_pipeline(self):
@@ -420,7 +461,7 @@ def launch_gui():
 
     root = tk.Tk()
     root.title(f"Hook Management System (HMS) Master Control Panel [{HMS_REV}]")
-    root.geometry("880x700")
+    root.geometry("850x680")
 
     # Form Variables
     var_slug = tk.StringVar(value="dear_me")
@@ -445,54 +486,52 @@ def launch_gui():
     input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=10)
     input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-    # Helper browse functions
+    # Browse Helpers
     def browse_video_dir():
-        d = filedialog.askdirectory(title="Select Video Shots Directory", initialdir=var_video_dir.get())
+        d = filedialog.askdirectory(title="Select Video Shots Directory")
         if d:
             var_video_dir.set(d)
 
     def browse_meta_dir():
-        d = filedialog.askdirectory(title="Select Metadata Directory", initialdir=var_meta_dir.get())
+        d = filedialog.askdirectory(title="Select Metadata Directory")
         if d:
             var_meta_dir.set(d)
 
-    def browse_audio_file():
-        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")], initialdir=os.path.dirname(var_audio_master.get()))
+    def browse_audio_master():
+        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio", "*.wav"), ("All Files", "*.*")])
         if f:
             var_audio_master.set(f)
 
     # Grid Form Layout
-    ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=3)
+    ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=2)
 
-    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(15,0))
-    ttk.Entry(input_frame, textvariable=var_title, width=25).grid(row=0, column=3, sticky=tk.W, pady=3)
+    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(10,0))
+    ttk.Entry(input_frame, textvariable=var_title, width=25).grid(row=0, column=3, sticky=tk.W, pady=2)
 
-    ttk.Label(input_frame, text="Video Shots Dir:").grid(row=1, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_video_dir, width=50).grid(row=1, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_video_dir).grid(row=1, column=4, padx=5, pady=3)
+    ttk.Label(input_frame, text="Video Shots Directory:").grid(row=1, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_video_dir, width=42).grid(row=1, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_video_dir).grid(row=1, column=3, sticky=tk.W, pady=2, padx=(5,0))
 
-    ttk.Label(input_frame, text="Metadata Dir:").grid(row=2, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_meta_dir, width=50).grid(row=2, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_meta_dir).grid(row=2, column=4, padx=5, pady=3)
+    ttk.Label(input_frame, text="Metadata Directory:").grid(row=2, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_meta_dir, width=42).grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_meta_dir).grid(row=2, column=3, sticky=tk.W, pady=2, padx=(5,0))
 
-    ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_audio_master, width=50).grid(row=3, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_audio_file).grid(row=3, column=4, padx=5, pady=3)
+    ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_audio_master, width=42).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_audio_master).grid(row=3, column=3, sticky=tk.W, pady=2, padx=(5,0))
 
-    ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=3)
+    ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=2)
 
-    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(15,0))
-    ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=3)
-
-    input_frame.columnconfigure(1, weight=1)
+    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=2, padx=(10,0))
+    ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=2)
 
     # Action Buttons Frame
     btn_frame = ttk.Frame(root, padding=10)
     btn_frame.pack(fill=tk.X)
 
-    log_box = scrolledtext.ScrolledText(root, height=15, font=("Consolas", 9), bg="#1e1e1e", fg="#d4d4d4")
+    log_box = scrolledtext.ScrolledText(root, height=15, font=("Consolas", 9))
     logger = HMSLogger(log_widget=log_box)
 
     def get_config():

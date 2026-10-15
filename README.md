@@ -1,57 +1,60 @@
 # Hook Management System (HMS) Architecture
 
-System Revision: v2.6.2
-
-An automated audiovisual post-production pipeline connecting Suno AI audio engines, Google Flow generative video models, and DaVinci Resolve Free/Studio via track-isolated FCP 7 XML (xmeml v5) synchronization.
+Automated concept-to-production pipeline for Suno AI music blueprinting, Google Flow (Veo 3.1 & Gemini Omni Flash) video generation, and DaVinci Resolve post-production synchronization.
 
 ---
 
-## Key Features
+## 🚀 Key Capabilities (v2.7.0)
 
-* **Master GUI Control Panel (hms_master_gui.py / hms_master_gui.exe):** Single-window Tkinter desktop control center with native Browse... directory pickers and live execution logging console.
-* **Sub-Second Audio Trimming:** Automatically cuts hook segments from master WAV files, bypassing DaVinci Resolve sub-second audio dropouts.
-* **Sequential Shot Renamer:** Chronologically orders and renames generated MP4 video clips (shot1.mp4 through shot5.mp4).
-* **Track-Aware Beat & Transient Marker Loading:** Converts onset timestamps into magnetic blue timeline markers on audio track A1.
-* **FCP 7 XML (xmeml v5) Engine:** Uses discrete track blocks to eliminate FCPXML video freeze-frame hold bugs.
-* **1-Click Standalone Executable Packaging:** Package into a single Windows executable using build_exe.bat or automated GitHub Actions cloud builds.
-
----
-
-## Repository Structure
-
-```text
-C:\github\projects\hook-management-system\
-├── hms_master_gui.py         # Master Control Panel Application (v2.6.2)
-├── README.md                 # System architecture documentation
-├── CHANGELOG.md              # Version release history
-├── 337west_icon.ico          # Custom 3D metallic 337West executable icon
-├── 337west_icon.png          # High-resolution branding graphic
-├── build_exe.bat             # 1-click Windows PyInstaller build script
-├── build_exe.py              # Python build script engine
-├── requirements.txt          # Python dependency manifest
-├── .gitignore                # Filter for heavy render outputs
-├── .github\
-│   └── workflows\
-│       └── build_release.yml # Automated GitHub Actions release workflow
-└── docs\
-    └── davinci_import_sop.md # DaVinci Resolve import SOP
-```
+- **Master Control Panel GUI (`hms_master_gui.py`):** Single-window Tkinter desktop app for track workflow automation.
+- **Dynamic Shot Discovery:** Automatically detects any number of `shot*.mp4` files (e.g. 4 shots at 10s each) and reads exact clip durations from MP4 file headers.
+- **Freeze-Frame Prevention:** FCP 7 XML (`xmeml v5`) generator explicitly embeds `<duration>` and `<samplecharacteristics>` tags in video `<file>` definitions to prevent DaVinci Resolve from importing MP4s as static still holds.
+- **Track Isolation & Revision Auditability:** Prefixing track slugs (`<slug>_...`) and embedding system revision tags (`v2.7.0`) into FCP 7 XML root headers and timeline markers.
+- **Sub-Second Audio Trimming:** Trims master WAV tracks to exact hook offsets to eliminate timeline drift.
+- **Cloud Automated Executables:** Automated Windows executable build and GitHub Release publishing via `.github/workflows/build_release.yml`.
 
 ---
 
-## Quick Start
+## 🛠️ Installation & Windows Executable Build
 
-### Option 1: Run the Standalone .exe
-Download `hms_master_gui.exe` from the GitHub Releases page and double-click to launch!
-
-### Option 2: Run via Python
+### Running Python Script Directly
 ```cmd
-pip install -r requirements.txt
 python hms_master_gui.py
 ```
 
-### Option 3: Build Your Own .exe Locally
+### Local Windows Executable Build (`.exe`)
+To package `hms_master_gui.py` into a standalone Windows executable with the **337West** custom icon:
+
 ```cmd
 build_exe.bat
 ```
-Your compiled application will be generated in `dist\hms_master_gui.exe`.
+*Output executable will be generated at `dist\hms_master_gui.exe`.*
+
+---
+
+## 📦 Automated Release via GitHub Actions
+
+Push a version tag to trigger a cloud build and automatically attach `hms_master_gui.exe` to your GitHub Releases page:
+
+```powershell
+git tag v2.7.0
+git push origin v2.7.0
+```
+
+---
+
+## 📄 Repository Structure
+
+```text
+hook-management-system/
+├── hms_master_gui.py         # Control Panel Application v2.7.0
+├── README.md                 # Project Documentation
+├── CHANGELOG.md              # Revision History
+├── 337west_icon.ico          # Windows Executable Icon
+├── build_exe.py              # PyInstaller Python Build Script
+├── build_exe.bat             # Batch Executable Launcher
+├── requirements.txt          # Dependency Manifest
+└── .github/
+    └── workflows/
+        └── build_release.yml # GitHub Actions Release Workflow
+```
