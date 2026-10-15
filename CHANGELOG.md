@@ -2,15 +2,23 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v2.6.2] - 2026-10-15
+
+### Fixed
+- **`--noconsole` GUI Execution Logging Crash:** Resolved a critical bug where launching `hms_master_gui.exe` in GUI mode (`--noconsole`) caused `sys.stdout` to be `None`, throwing an unhandled `AttributeError` on `print()` calls inside `HMSLogger.log()`.
+- **Dual Console & File Logging:** Added safe I/O stream redirection for `sys.stdout` and `sys.stderr` to `io.StringIO()`. Logs are now reliably displayed in the Tkinter live console text widget and saved to `C:\renders\hms_workflow.log` even when running without a command console open.
+
+---
+
 ## [v2.6.1] - 2026-10-15
 
 ### Added
-- **Automated GitHub Actions CI/CD Pipeline:** Added `.github/workflows/build_release.yml` to compile `hms_master_gui.exe` automatically in the cloud on Windows runners whenever a `v*` release tag is pushed.
-- **Branded 337West Icon:** Integrated custom 3D metallic `337West` icon assets (`337west_icon.ico` and `337west_icon.png`) into PyInstaller executable builds (`build_exe.bat` and `build_exe.py`).
-- **Automated GitHub Releases:** Configured `softprops/action-gh-release@v2` to publish compiled executables, SOP documentation, and CHANGELOG release notes automatically.
+- **Automated CI/CD Release Pipeline:** Added `.github/workflows/build_release.yml` to automatically build `hms_master_gui.exe` using PyInstaller on a cloud Windows runner upon pushing version tags (`v*`).
+- **337West Executable Branding:** Embedded the custom high-resolution 3D metallic 337West icon (`337west_icon.ico`) into the compiled Windows executable.
 
 ### Fixed
-- **Windows UTF-8 Encoding Fix:** Resolved `UnicodeEncodeError: 'charmap'` failure in `build_exe.py` during GitHub Actions build execution on Windows by setting explicit UTF-8 encoding and replacing non-ASCII output symbols with clean log tags.
+- **Windows UTF-8 Runner Encoding:** Configured `PYTHONIOENCODING: "utf-8"` and replaced Unicode emoji print characters in build scripts to prevent `UnicodeEncodeError` on Windows `cp1252` runners.
+- **Pillow Dependency:** Added `Pillow>=10.0.0` to `requirements.txt` for native PyInstaller `.ico` file processing.
 
 ---
 
@@ -21,9 +29,6 @@ All notable changes to the Hook Management System (HMS) project will be document
 - **Executable Builder Engine:** Created `build_exe.bat` and `build_exe.py` scripts to package `hms_master_gui.py` into a single standalone Windows executable (`dist/hms_master_gui.exe`) via PyInstaller.
 - **Dependency Manifest Update:** Added `pyinstaller>=6.0.0` to `requirements.txt`.
 
-### Fixed
-- Path handling and validation when selecting custom or non-standard folder locations outside `C:\renders\`.
-
 ---
 
 ## [v2.5.0] - 2026-10-15
@@ -32,7 +37,7 @@ All notable changes to the Hook Management System (HMS) project will be document
 - **Master GUI Control Panel:** Single-window Tkinter desktop application (`hms_master_gui.py`) consolidating shot renaming, audio trimming, beat loading, and XML generation.
 - **Track Isolation Protocol:** Prefixing files with track slugs (`<track_slug>_...`) to prevent metadata overwrites across multi-song production runs.
 - **Sub-Second Audio Trimming:** Automatic wave cutter to prevent DaVinci Resolve audio offset dropouts.
-- **Revision Tagging Auditability:** Embedded `v2.5.0` system revision tags into FCP 7 XML root header, sequence title, and frame 0 markers.
+- **Revision Tagging Auditability:** Embedded system revision tags into FCP 7 XML root header, sequence title, and frame 0 markers.
 - **Live Logging System:** Simultaneous console logging and file logging (`C:\renders\hms_workflow.log`).
 
 ---

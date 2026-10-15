@@ -1,20 +1,19 @@
-# Hook Management System (HMS) - Master Automation Architecture
+# Hook Management System (HMS) Architecture
 
-## Overview
+System Revision: v2.6.2
 
-The **Hook Management System (HMS)** is a professional automation pipeline designed for AI music video creators, video editors, and audio engineers. HMS bridges Suno AI audio generation, Google Flow / Veo 3 video renders, and DaVinci Resolve (Free & Studio) post-production timelines.
-
-It solves sub-second audio offset drift, frame-accurate beat markers, sequential shot ordering, and FCPXML timeline freeze-frame bugs in a single desktop GUI application or standalone executable.
+An automated audiovisual post-production pipeline connecting Suno AI audio engines, Google Flow generative video models, and DaVinci Resolve Free/Studio via track-isolated FCP 7 XML (xmeml v5) synchronization.
 
 ---
 
-## Key Features in v2.6.1
+## Key Features
 
-- **Single-Window Desktop GUI (v2.6.1):** Consolidated Tkinter control panel (`hms_master_gui.py`) with interactive `Browse...` file pickers for directories and WAV files.
-- **Branded Executable Packaging:** Standalone Windows `.exe` build support via `build_exe.bat` or `build_exe.py` featuring custom 3D metallic **337West** icon branding.
-- **Automated Cloud Releases (GitHub Actions):** `.github/workflows/build_release.yml` automatically compiles the `.exe` and publishes GitHub Releases on version tag pushes (`v*`).
-- **Track-Aware Audio & Transient Sync:** Sub-second WAV audio trimmer (`<slug>_master_trimmed.wav`) and track-isolated transient beat pin loader (`<slug>_thebeats.txt`).
-- **FCP 7 XML Engine (`xmeml v5`):** Generates clean multi-track timelines (`<slug>_hook_timeline.xml`) compatible with DaVinci Resolve Free Edition without freeze-frame hold bugs.
+* **Master GUI Control Panel (hms_master_gui.py / hms_master_gui.exe):** Single-window Tkinter desktop control center with native Browse... directory pickers and live execution logging console.
+* **Sub-Second Audio Trimming:** Automatically cuts hook segments from master WAV files, bypassing DaVinci Resolve sub-second audio dropouts.
+* **Sequential Shot Renamer:** Chronologically orders and renames generated MP4 video clips (shot1.mp4 through shot5.mp4).
+* **Track-Aware Beat & Transient Marker Loading:** Converts onset timestamps into magnetic blue timeline markers on audio track A1.
+* **FCP 7 XML (xmeml v5) Engine:** Uses discrete track blocks to eliminate FCPXML video freeze-frame hold bugs.
+* **1-Click Standalone Executable Packaging:** Package into a single Windows executable using build_exe.bat or automated GitHub Actions cloud builds.
 
 ---
 
@@ -22,45 +21,37 @@ It solves sub-second audio offset drift, frame-accurate beat markers, sequential
 
 ```text
 C:\github\projects\hook-management-system\
-├── hms_master_gui.py              # Master GUI Application (v2.6.1)
-├── build_exe.py                   # PyInstaller UTF-8 build script
-├── build_exe.bat                  # 1-click Windows EXE builder
-├── 337west_icon.ico               # Multi-resolution 337West app icon
-├── 337west_icon.png               # High-res 337West graphic badge
-├── README.md                      # Main project documentation
-├── CHANGELOG.md                   # System version history
-├── requirements.txt               # Dependencies (pyinstaller, librosa, numpy)
-├── .gitignore                     # Git filter for renders and temporary builds
+├── hms_master_gui.py         # Master Control Panel Application (v2.6.2)
+├── README.md                 # System architecture documentation
+├── CHANGELOG.md              # Version release history
+├── 337west_icon.ico          # Custom 3D metallic 337West executable icon
+├── 337west_icon.png          # High-resolution branding graphic
+├── build_exe.bat             # 1-click Windows PyInstaller build script
+├── build_exe.py              # Python build script engine
+├── requirements.txt          # Python dependency manifest
+├── .gitignore                # Filter for heavy render outputs
 ├── .github\
 │   └── workflows\
-│       └── build_release.yml      # GitHub Actions automated release pipeline
+│       └── build_release.yml # Automated GitHub Actions release workflow
 └── docs\
-    └── davinci_import_sop.md      # DaVinci Resolve 4-step import SOP
+    └── davinci_import_sop.md # DaVinci Resolve import SOP
 ```
 
 ---
 
-## Quickstart Guide
+## Quick Start
 
-### Option 1: Run Standalone Executable
-1. Download `hms_master_gui.exe` from your GitHub Releases page.
-2. Double-click `hms_master_gui.exe` to launch the GUI control panel.
+### Option 1: Run the Standalone .exe
+Download `hms_master_gui.exe` from the GitHub Releases page and double-click to launch!
 
-### Option 2: Run Python Script
+### Option 2: Run via Python
 ```cmd
-cd C:\github\projects\hook-management-system
 pip install -r requirements.txt
 python hms_master_gui.py
 ```
 
-### Option 3: Build `.exe` Locally
+### Option 3: Build Your Own .exe Locally
 ```cmd
 build_exe.bat
 ```
-*(Outputs `dist/hms_master_gui.exe` with embedded 337West icon)*
-
----
-
-## License & Attribution
-
-Developed by 337West for the Hook Management System architecture. Licensed under Apache 2.0.
+Your compiled application will be generated in `dist\hms_master_gui.exe`.

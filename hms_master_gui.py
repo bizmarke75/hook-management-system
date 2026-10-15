@@ -1,10 +1,17 @@
 import os
 import sys
+import io
 import re
 import wave
 import pathlib
 import datetime
 import logging
+
+# Prevent PyInstaller --noconsole NoneType stdout/stderr crashes
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
 
 # Check GUI availability
 try:
@@ -15,10 +22,10 @@ except ImportError:
     HAS_TKINTER = False
 
 # System Revision Definition
-HMS_REV = "v2.6.1"
+HMS_REV = "v2.6.2"
 
 class HMSLogger:
-    """Handles dual logging to GUI text widget and file."""
+    """Handles dual logging to GUI text widget and file safely in both console and GUI modes."""
     def __init__(self, log_widget=None, log_file_path=r"C:\renders\hms_workflow.log"):
         self.log_widget = log_widget
         self.log_file_path = log_file_path
@@ -33,21 +40,26 @@ class HMSLogger:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted = f"[{timestamp}] [{HMS_REV}] [{level}] {message}"
         
-        # Print to stdout
-        print(formatted)
+        # Print to stdout safely if available
+        if sys.stdout is not None:
+            try:
+                print(formatted)
+            except Exception:
+                pass
         
         # Append to log file
         try:
             with open(self.log_file_path, "a", encoding="utf-8") as f:
                 f.write(formatted + "\n")
-        except Exception as e:
-            print(f"Warning: Could not write to log file: {e}")
+        except Exception:
+            pass
             
-        # Update GUI if present
+        # Update GUI console widget if present
         if self.log_widget and HAS_TKINTER:
             try:
                 self.log_widget.insert(tk.END, formatted + "\n")
                 self.log_widget.see(tk.END)
+                self.log_widget.update_idletasks()
             except Exception:
                 pass
 
@@ -433,7 +445,7 @@ def launch_gui():
     input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=10)
     input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-    # Browse Handlers
+    # Helper browse functions
     def browse_video_dir():
         d = filedialog.askdirectory(title="Select Video Shots Directory", initialdir=var_video_dir.get())
         if d:
@@ -445,7 +457,7 @@ def launch_gui():
             var_meta_dir.set(d)
 
     def browse_audio_file():
-        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")])
+        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")], initialdir=os.path.dirname(var_audio_master.get()))
         if f:
             var_audio_master.set(f)
 
@@ -453,32 +465,34 @@ def launch_gui():
     ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=3)
     ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(10,0))
+    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(15,0))
     ttk.Entry(input_frame, textvariable=var_title, width=25).grid(row=0, column=3, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Video Directory:").grid(row=1, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_video_dir, width=45).grid(row=1, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_video_dir).grid(row=1, column=3, sticky=tk.W, padx=5, pady=3)
+    ttk.Label(input_frame, text="Video Shots Dir:").grid(row=1, column=0, sticky=tk.W, pady=3)
+    ttk.Entry(input_frame, textvariable=var_video_dir, width=50).grid(row=1, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_video_dir).grid(row=1, column=4, padx=5, pady=3)
 
-    ttk.Label(input_frame, text="Metadata Directory:").grid(row=2, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_meta_dir, width=45).grid(row=2, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_meta_dir).grid(row=2, column=3, sticky=tk.W, padx=5, pady=3)
+    ttk.Label(input_frame, text="Metadata Dir:").grid(row=2, column=0, sticky=tk.W, pady=3)
+    ttk.Entry(input_frame, textvariable=var_meta_dir, width=50).grid(row=2, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_meta_dir).grid(row=2, column=4, padx=5, pady=3)
 
     ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_audio_master, width=45).grid(row=3, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_audio_file).grid(row=3, column=3, sticky=tk.W, padx=5, pady=3)
+    ttk.Entry(input_frame, textvariable=var_audio_master, width=50).grid(row=3, column=1, columnspan=3, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_audio_file).grid(row=3, column=4, padx=5, pady=3)
 
     ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=3)
     ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(10,0))
+    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(15,0))
     ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=3)
+
+    input_frame.columnconfigure(1, weight=1)
 
     # Action Buttons Frame
     btn_frame = ttk.Frame(root, padding=10)
     btn_frame.pack(fill=tk.X)
 
-    log_box = scrolledtext.ScrolledText(root, height=15, font=("Consolas", 9))
+    log_box = scrolledtext.ScrolledText(root, height=15, font=("Consolas", 9), bg="#1e1e1e", fg="#d4d4d4")
     logger = HMSLogger(log_widget=log_box)
 
     def get_config():
