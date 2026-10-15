@@ -2,6 +2,18 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v2.6.1] - 2026-10-15
+
+### Added
+- **Automated GitHub Actions CI/CD Pipeline:** Added `.github/workflows/build_release.yml` to compile `hms_master_gui.exe` automatically in the cloud on Windows runners whenever a `v*` release tag is pushed.
+- **Branded 337West Icon:** Integrated custom 3D metallic `337West` icon assets (`337west_icon.ico` and `337west_icon.png`) into PyInstaller executable builds (`build_exe.bat` and `build_exe.py`).
+- **Automated GitHub Releases:** Configured `softprops/action-gh-release@v2` to publish compiled executables, SOP documentation, and CHANGELOG release notes automatically.
+
+### Fixed
+- **Windows UTF-8 Encoding Fix:** Resolved `UnicodeEncodeError: 'charmap'` failure in `build_exe.py` during GitHub Actions build execution on Windows by setting explicit UTF-8 encoding and replacing non-ASCII output symbols with clean log tags.
+
+---
+
 ## [v2.6.0] - 2026-10-15
 
 ### Added

@@ -2,42 +2,53 @@ import os
 import sys
 import subprocess
 
-def build():
-    print("=" * 60)
-    print("HMS Master GUI Executable Builder (PyInstaller v2.6.0)")
-    print("=" * 60)
-    
-    # Ensure pyinstaller is installed
+# Force UTF-8 output encoding for Windows runners
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     try:
-        import PyInstaller
-    except ImportError:
-        print("Installing PyInstaller...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
+def main():
+    print("============================================================")
+    print(" Hook Management System (HMS) - PyInstaller Build Engine ")
+    print("============================================================")
+    
+    script_path = "hms_master_gui.py"
+    icon_path = "337west_icon.ico"
+    app_name = "hms_master_gui"
+    
+    if not os.path.exists(script_path):
+        print(f"Error: {script_path} not found in current directory.")
+        sys.exit(1)
+        
     cmd = [
-        "pyinstaller",
+        sys.executable, "-m", "PyInstaller",
         "--noconsole",
         "--onefile",
-        "--icon=337west_icon.ico",
-        "--name=hms_master_gui",
-        "hms_master_gui.py"
+        f"--name={app_name}",
+        script_path
     ]
     
-    print("\nExecuting build command:")
-    print(" ".join(cmd))
-    print("-" * 60)
-    
-    res = subprocess.run(cmd)
-    
-    if res.returncode == 0:
-        exe_path = os.path.join("dist", "hms_master_gui.exe")
-        print("\n" + "=" * 60)
-        print(f"✅ SUCCESS! Standalone executable created with 337West Icon at:\n   {os.path.abspath(exe_path)}")
-        print("=" * 60)
+    if os.path.exists(icon_path):
+        cmd.insert(4, f"--icon={icon_path}")
+        print(f"Using icon: {icon_path}")
     else:
-        print("\n" + "=" * 60)
-        print("❌ BUILD FAILED! Check error output above.")
-        print("=" * 60)
+        print("Warning: 337west_icon.ico not found. Building with default icon.")
+        
+    print(f"Executing build command:\n{' '.join(cmd)}")
+    print("------------------------------------------------------------")
+    
+    try:
+        subprocess.run(cmd, check=True)
+        print("------------------------------------------------------------")
+        print("[SUCCESS] BUILD COMPLETE!")
+        print(f"Executable generated at: {os.path.abspath(os.path.join('dist', f'{app_name}.exe'))}")
+        print("============================================================")
+    except subprocess.CalledProcessError as e:
+        print("------------------------------------------------------------")
+        print("[FAILED] BUILD FAILED! Check error output above.")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    build()
+    main()

@@ -15,7 +15,7 @@ except ImportError:
     HAS_TKINTER = False
 
 # System Revision Definition
-HMS_REV = "v2.6.0"
+HMS_REV = "v2.6.1"
 
 class HMSLogger:
     """Handles dual logging to GUI text widget and file."""
@@ -105,11 +105,13 @@ class HMSPipelineEngine:
             self.logger.log(f"No MP4 files found in {video_dir}", "WARNING")
             return False
 
+        # Filter out already correctly named shot files to avoid self-overwrite
         shot_files = [f for f in files if re.match(r"^shot\d+\.mp4$", f, re.IGNORECASE)]
         if len(shot_files) == len(files):
             self.logger.log(f"All {len(shot_files)} shots already formatted properly (shot1.mp4...shot{len(shot_files)}.mp4).")
             return True
 
+        # Sort files by creation time
         files.sort(key=lambda x: os.path.getmtime(os.path.join(video_dir, x)))
         self.logger.log(f"Found {len(files)} raw MP4 files. Renaming sequentially by creation timestamp...")
 
@@ -175,6 +177,7 @@ class HMSPipelineEngine:
         slug = self.cfg["track_slug"]
         meta_dir = self.cfg["meta_dir"]
 
+        # Parse Hook File
         hook_candidates = [
             os.path.join(meta_dir, f"{slug}_hooktimestamp.txt"),
             os.path.join(meta_dir, "hooktimestamp.txt"),
@@ -196,6 +199,7 @@ class HMSPipelineEngine:
         else:
             self.logger.log(f"Hook file not found in {meta_dir}. Using default offset: {self.cfg['hook_start_sec']:.3f}s")
 
+        # Parse Beats File
         beats_candidates = [
             os.path.join(meta_dir, f"{slug}_thebeats.txt"),
             os.path.join(meta_dir, "thebeats.txt")
@@ -233,6 +237,7 @@ class HMSPipelineEngine:
         hook_start_sec = self.cfg["hook_start_sec"]
         beat_timestamps = self.cfg.get("beat_timestamps", [])
 
+        # Default shot list
         shots = [
             {"filename": "shot1.mp4", "duration_sec": 5.7083},
             {"filename": "shot2.mp4", "duration_sec": 8.0000},
@@ -252,6 +257,7 @@ class HMSPipelineEngine:
         hook_start_frames = round(hook_start_sec * fps)
         hook_end_sec = hook_start_sec + (total_video_frames / fps)
 
+        # Check for trimmed audio vs master audio
         trimmed_audio = self.cfg["audio_trimmed"]
         master_audio = self.cfg["audio_master"]
         
@@ -266,6 +272,7 @@ class HMSPipelineEngine:
             audio_out_frame = hook_start_frames + total_video_frames
             self.logger.log(f"Using Master Audio File with offset: {master_audio}")
 
+        # Construct XML with Rev Tags
         xml = [
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<!DOCTYPE xmeml>',
@@ -331,6 +338,7 @@ class HMSPipelineEngine:
             '            </marker>'
         ])
 
+        # Embed Beat Markers
         marker_count = 0
         if beat_timestamps:
             for bt in beat_timestamps:
@@ -353,6 +361,7 @@ class HMSPipelineEngine:
                         '            </marker>'
                     ])
         else:
+            # Grid Fallback (123 BPM)
             beat_interval = 60.0 / 123.0
             curr_t = hook_start_sec
             while curr_t <= hook_end_sec:
@@ -399,7 +408,7 @@ def launch_gui():
 
     root = tk.Tk()
     root.title(f"Hook Management System (HMS) Master Control Panel [{HMS_REV}]")
-    root.geometry("880x720")
+    root.geometry("880x700")
 
     # Form Variables
     var_slug = tk.StringVar(value="dear_me")
@@ -424,45 +433,45 @@ def launch_gui():
     input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=10)
     input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-    # Helper File Dialog Handlers
-    def browse_vdir():
-        chosen = filedialog.askdirectory(title="Select Video Shots Directory", initialdir=var_video_dir.get())
-        if chosen:
-            var_video_dir.set(chosen.replace('/', '\\'))
+    # Browse Handlers
+    def browse_video_dir():
+        d = filedialog.askdirectory(title="Select Video Shots Directory", initialdir=var_video_dir.get())
+        if d:
+            var_video_dir.set(d)
 
-    def browse_mdir():
-        chosen = filedialog.askdirectory(title="Select Metadata Directory", initialdir=var_meta_dir.get())
-        if chosen:
-            var_meta_dir.set(chosen.replace('/', '\\'))
+    def browse_meta_dir():
+        d = filedialog.askdirectory(title="Select Metadata Directory", initialdir=var_meta_dir.get())
+        if d:
+            var_meta_dir.set(d)
 
-    def browse_audio():
-        chosen = filedialog.askopenfilename(title="Select Master Audio WAV File", filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")], initialdir=os.path.dirname(var_audio_master.get()))
-        if chosen:
-            var_audio_master.set(chosen.replace('/', '\\'))
+    def browse_audio_file():
+        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")])
+        if f:
+            var_audio_master.set(f)
 
     # Grid Form Layout
     ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=3)
     ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(15,0))
+    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(10,0))
     ttk.Entry(input_frame, textvariable=var_title, width=25).grid(row=0, column=3, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Video Shots Directory:").grid(row=1, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_video_dir, width=45).grid(row=1, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_vdir).grid(row=1, column=4, padx=5, pady=3)
+    ttk.Label(input_frame, text="Video Directory:").grid(row=1, column=0, sticky=tk.W, pady=3)
+    ttk.Entry(input_frame, textvariable=var_video_dir, width=45).grid(row=1, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_video_dir).grid(row=1, column=3, sticky=tk.W, padx=5, pady=3)
 
     ttk.Label(input_frame, text="Metadata Directory:").grid(row=2, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_meta_dir, width=45).grid(row=2, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_mdir).grid(row=2, column=4, padx=5, pady=3)
+    ttk.Entry(input_frame, textvariable=var_meta_dir, width=45).grid(row=2, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_meta_dir).grid(row=2, column=3, sticky=tk.W, padx=5, pady=3)
 
     ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_audio_master, width=45).grid(row=3, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=browse_audio).grid(row=3, column=4, padx=5, pady=3)
+    ttk.Entry(input_frame, textvariable=var_audio_master, width=45).grid(row=3, column=1, columnspan=2, sticky=tk.W+tk.E, pady=3)
+    ttk.Button(input_frame, text="Browse...", command=browse_audio_file).grid(row=3, column=3, sticky=tk.W, padx=5, pady=3)
 
     ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=3)
     ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=3)
 
-    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(15,0))
+    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(10,0))
     ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=3)
 
     # Action Buttons Frame
@@ -533,7 +542,7 @@ def launch_gui():
     log_box.pack(in_=log_frame, fill=tk.BOTH, expand=True)
 
     logger.log(f"HMS Master Control Panel [{HMS_REV}] initialized successfully.")
-    logger.log(f"Ready to process project tracks with interactive directory browsing.")
+    logger.log(f"Ready to process project tracks.")
 
     root.mainloop()
 
@@ -541,6 +550,7 @@ if __name__ == "__main__":
     if HAS_TKINTER and len(sys.argv) == 1:
         launch_gui()
     else:
+        # Command line fallback execution
         cfg = {
             "track_slug": "dear_me",
             "track_title": "Dear Me",
