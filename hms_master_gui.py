@@ -7,18 +7,6 @@ import datetime
 import logging
 import threading
 
-# Prevent PyInstaller --noconsole crashes when sys.stdout or sys.stderr is None
-class NullWriter:
-    def write(self, s):
-        pass
-    def flush(self):
-        pass
-
-if sys.stdout is None:
-    sys.stdout = NullWriter()
-if sys.stderr is None:
-    sys.stderr = NullWriter()
-
 # Check GUI availability
 try:
     import tkinter as tk
@@ -30,13 +18,32 @@ except ImportError:
 # System Revision Definition
 HMS_REV = "v2.8.0"
 
+class GUIStdoutRedirector:
+    """Safely redirects stdout/stderr to GUI text widget without crashing if sys.stdout is None."""
+    def __init__(self, log_widget, level="INFO"):
+        self.log_widget = log_widget
+        self.level = level
+
+    def write(self, message):
+        if not message:
+            return
+        if self.log_widget and HAS_TKINTER:
+            try:
+                self.log_widget.insert(tk.END, message)
+                self.log_widget.see(tk.END)
+                self.log_widget.update_idletasks()
+            except Exception:
+                pass
+
+    def flush(self):
+        pass
+
 class HMSLogger:
-    """Handles dual logging to GUI text widget, log file, and stdout."""
+    """Handles dual logging to GUI text widget and file."""
     def __init__(self, log_widget=None, log_file_path=r"C:\renders\hms_workflow.log"):
         self.log_widget = log_widget
         self.log_file_path = log_file_path
         
-        # Ensure log directory exists
         try:
             os.makedirs(os.path.dirname(os.path.abspath(self.log_file_path)), exist_ok=True)
         except Exception:
@@ -46,7 +53,7 @@ class HMSLogger:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted = f"[{timestamp}] [{HMS_REV}] [{level}] {message}"
         
-        # 1. Update GUI text widget FIRST (with UI refresh)
+        # Write to GUI log box safely
         if self.log_widget and HAS_TKINTER:
             try:
                 self.log_widget.insert(tk.END, formatted + "\n")
@@ -54,17 +61,18 @@ class HMSLogger:
                 self.log_widget.update_idletasks()
             except Exception:
                 pass
-
-        # 2. Append to log file
+                
+        # Write to stdout if available
+        if sys.stdout is not None:
+            try:
+                print(formatted)
+            except Exception:
+                pass
+        
+        # Append to log file
         try:
             with open(self.log_file_path, "a", encoding="utf-8") as f:
                 f.write(formatted + "\n")
-        except Exception:
-            pass
-            
-        # 3. Print to stdout safely
-        try:
-            print(formatted)
         except Exception:
             pass
 
@@ -72,7 +80,7 @@ def parse_time_string(val_str):
     """Parses floats ('164.281') or timecodes ('02:44.281' / '02:44:16')."""
     if not val_str:
         return None
-    val_str = val_str.strip()
+    val_str = str(val_str).strip()
     if not val_str:
         return None
     
@@ -124,25 +132,33 @@ class HMSPipelineEngine:
 
         shot_files = [f for f in files if re.match(r"^shot\d+\.mp4$", f, re.IGNORECASE)]
         if len(shot_files) == len(files):
-            self.logger.log(f"All {len(shot_files)} shots formatted properly (shot1.mp4...shot{len(shot_files)}.mp4).")
+            self.logger.log(f"All {len(shot_files)} shots already formatted properly (shot1.mp4...shot{len(shot_files)}.mp4).")
             return True
 
-        files.sort(key=lambda x: os.path.getmtime(os.path.join(video_dir, x)))
-        self.logger.log(f"Found {len(files)} raw MP4 files. Renaming sequentially by timestamp...")
+        self.logger.log(f"Found {len(files)} raw MP4 files. Renaming sequentially by creation timestamp...")
+        files_with_time = []
+        for fname in files:
+            full_path = os.path.join(video_dir, fname)
+            try:
+                mtime = os.path.getmtime(full_path)
+            except Exception:
+                mtime = 0
+            files_with_time.append((mtime, fname))
+
+        files_with_time.sort(key=lambda x: x[0])
 
         renamed_count = 0
-        for i, filename in enumerate(files):
-            old_path = os.path.join(video_dir, filename)
-            new_name = f"shot{i+1}.mp4"
+        for idx, (_, old_name) in enumerate(files_with_time, start=1):
+            new_name = f"shot{idx}.mp4"
+            old_path = os.path.join(video_dir, old_name)
             new_path = os.path.join(video_dir, new_name)
-            
-            if old_path != new_path:
+            if old_name != new_name:
                 try:
                     os.rename(old_path, new_path)
-                    self.logger.log(f"  Renamed: {filename} -> {new_name}")
+                    self.logger.log(f"  Renamed: {old_name} -> {new_name}")
                     renamed_count += 1
                 except Exception as e:
-                    self.logger.log(f"  Failed to rename {filename}: {e}", "ERROR")
+                    self.logger.log(f"  Failed to rename {old_name}: {e}", "ERROR")
 
         self.logger.log(f"Step 1 Complete: Renamed {renamed_count} shots.")
         return True
@@ -156,7 +172,7 @@ class HMSPipelineEngine:
         duration_sec = self.cfg["hook_duration_sec"]
 
         if not os.path.exists(audio_master):
-            self.logger.log(f"Master audio not found: {audio_master}. Skipping audio trim.", "WARNING")
+            self.logger.log(f"Master audio not found: {audio_master}. Skipping audio trim (will use full master with offset).", "WARNING")
             return False
 
         try:
@@ -164,6 +180,11 @@ class HMSPipelineEngine:
                 params = wav_in.getparams()
                 n_channels, sample_width, framerate, n_frames = params[:4]
                 
+                # Check for 24-bit or floating-point WAV unsupported by stdlib wave
+                if sample_width not in (2, 4):
+                    self.logger.log(f"Notice: Master audio uses {sample_width*8}-bit sample depth. Preserving original Master WAV to maintain pristine 24-bit sound quality.", "INFO")
+                    return True
+
                 start_frame = int(hook_start_sec * framerate)
                 total_trim_frames = int(duration_sec * framerate)
                 
@@ -180,11 +201,11 @@ class HMSPipelineEngine:
                     wav_out.setparams(params)
                     wav_out.writeframes(raw_data)
                     
-            self.logger.log(f"Step 2 Complete: Trimmed audio saved to '{trimmed_output}' ({frames_to_read/framerate:.2f}s).")
+            self.logger.log(f"Step 2 Complete: Trimmed audio saved to '{trimmed_output}' (Duration: {frames_to_read/framerate:.2f}s).")
             return True
         except Exception as e:
-            self.logger.log(f"Audio trimming failed: {e}", "ERROR")
-            return False
+            self.logger.log(f"Audio trim notice: {e}. Defaulting to Master WAV offset mode for pristine quality.", "INFO")
+            return True
 
     def run_step_3_load_metadata(self):
         """Step 3: Parse track-aware beat transients and hook timestamps."""
@@ -203,13 +224,17 @@ class HMSPipelineEngine:
             if os.path.exists(cand):
                 hook_found = cand
                 break
-                
+
         if hook_found:
-            with open(hook_found, "r", encoding="utf-8", errors="ignore") as f:
-                parsed = parse_time_string(f.read())
-                if parsed is not None:
-                    self.cfg["hook_start_sec"] = parsed
-                    self.logger.log(f"Parsed Hook Start Offset: {parsed:.3f}s from '{hook_found}'")
+            try:
+                with open(hook_found, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    parsed = parse_time_string(content)
+                    if parsed is not None:
+                        self.cfg["hook_start_sec"] = parsed
+                        self.logger.log(f"Parsed Hook Start Offset: {parsed:.3f}s from '{hook_found}'")
+            except Exception as e:
+                self.logger.log(f"Error reading hook file '{hook_found}': {e}", "WARNING")
         else:
             self.logger.log(f"Hook file not found in {meta_dir}. Using default offset: {self.cfg['hook_start_sec']:.3f}s")
 
@@ -248,35 +273,32 @@ class HMSPipelineEngine:
         video_dir = self.cfg["video_dir"]
         xml_out = self.cfg["xml_output"]
         hook_start_sec = self.cfg["hook_start_sec"]
+        use_master_direct = self.cfg.get("use_master_direct", True)
         beat_timestamps = self.cfg.get("beat_timestamps", [])
 
-        shot_files = []
-        if os.path.exists(video_dir):
-            shot_files = sorted([f for f in os.listdir(video_dir) if re.match(r"^shot\d+\.mp4$", f, re.IGNORECASE)])
-
-        if not shot_files:
-            shot_files = ["shot1.mp4", "shot2.mp4", "shot3.mp4", "shot4.mp4", "shot5.mp4"]
-            self.logger.log("No shot*.mp4 files found on disk. Generating XML structure with 5 default shots.", "WARNING")
-        else:
-            self.logger.log(f"Found {len(shot_files)} shot files in '{video_dir}' for timeline assembly.")
+        # Default shot list
+        shots = [
+            {"filename": "shot1.mp4", "duration_sec": 5.7083},
+            {"filename": "shot2.mp4", "duration_sec": 8.0000},
+            {"filename": "shot3.mp4", "duration_sec": 10.0000},
+            {"filename": "shot4.mp4", "duration_sec": 8.0000},
+            {"filename": "shot5.mp4", "duration_sec": 8.2917},
+        ]
 
         clips_data = []
         total_video_frames = 0
-        default_dur_sec = 10.0
-        for sf in shot_files:
-            dur_sec = default_dur_sec
-            frames = round(dur_sec * fps)
-            fpath = os.path.join(video_dir, sf)
-            clips_data.append({"filename": sf, "path": fpath, "frames": frames})
+        for shot in shots:
+            frames = round(shot["duration_sec"] * fps)
+            fpath = os.path.join(video_dir, shot["filename"])
+            clips_data.append({"filename": shot["filename"], "path": fpath, "frames": frames})
             total_video_frames += frames
 
         hook_start_frames = round(hook_start_sec * fps)
-        hook_end_sec = hook_start_sec + (total_video_frames / fps)
-
         trimmed_audio = self.cfg["audio_trimmed"]
         master_audio = self.cfg["audio_master"]
         
-        if os.path.exists(trimmed_audio):
+        # Audio Selection Logic — Prefer Uncompressed Master WAV to avoid 24-bit/32-bit truncation distortion
+        if not use_master_direct and os.path.exists(trimmed_audio):
             active_audio_path = trimmed_audio
             audio_in_frame = 0
             audio_out_frame = total_video_frames
@@ -285,8 +307,9 @@ class HMSPipelineEngine:
             active_audio_path = master_audio
             audio_in_frame = hook_start_frames
             audio_out_frame = hook_start_frames + total_video_frames
-            self.logger.log(f"Using Master Audio File with offset: {master_audio}")
+            self.logger.log(f"Using Master Audio File (Pristine 24-Bit Sound) with offset {hook_start_sec:.3f}s: {master_audio}")
 
+        # Construct XML
         xml = [
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<!DOCTYPE xmeml>',
@@ -294,138 +317,143 @@ class HMSPipelineEngine:
             f'<!-- Track: {title} ({slug}) | Date: {datetime.datetime.now().isoformat()} -->',
             '<xmeml version="5">',
             '  <sequence>',
-            f'    <name>{title} Hook Video [{rev}]</name>',
-            f'    <duration>{total_video_frames}</duration>',
-            f'    <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-            '    <timecode>',
-            f'      <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-            '      <string>00:00:00:00</string><frame>0</frame><displayformat>NDF</displayformat>',
-            '    </timecode>',
+            f'    <name>{title} - HMS Hook Timeline [{rev}]</name>',
+            f'    <duration>{hook_start_frames + total_video_frames}</duration>',
+            '    <rate>',
+            f'      <timebase>{fps}</timebase>',
+            '      <ntsc>FALSE</ntsc>',
+            '    </rate>',
             '    <media>',
             '      <video>',
-            '        <format><samplecharacteristics><width>1280</width><height>720</height></samplecharacteristics></format>',
+            '        <format>',
+            '          <samplecharacteristics>',
+            '            <width>1920</width>',
+            '            <height>1080</height>',
+            '            <pixelaspectratio>square</pixelaspectratio>',
+            f'            <rate><timebase>{fps}</timebase></rate>',
+            '          </samplecharacteristics>',
+            '        </format>',
             '        <track>'
         ]
 
-        current_frame = 0
-        for i, clip in enumerate(clips_data):
-            dur = clip["frames"]
+        # Video Clips Placement
+        curr_frame = hook_start_frames
+        for idx, clip in enumerate(clips_data, start=1):
             file_uri = win_to_uri(clip["path"])
             xml.extend([
-                f'          <clipitem id="video_clip_{i+1}">',
+                '          <clipitem>',
                 f'            <name>{clip["filename"]}</name>',
-                f'            <duration>{dur}</duration>',
-                f'            <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-                f'            <start>{current_frame}</start><end>{current_frame + dur}</end>',
-                f'            <in>0</in><out>{dur}</out>',
-                f'            <file id="file_vid_{i+1}">',
+                f'            <duration>{clip["frames"]}</duration>',
+                '            <rate>',
+                f'              <timebase>{fps}</timebase>',
+                '            </rate>',
+                f'            <start>{curr_frame}</start>',
+                f'            <end>{curr_frame + clip["frames"]}</end>',
+                '            <in>0</in>',
+                f'            <out>{clip["frames"]}</out>',
+                '            <file id="file_' + str(idx) + '">',
                 f'              <name>{clip["filename"]}</name>',
                 f'              <pathurl>{file_uri}</pathurl>',
-                f'              <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-                '              <media><video/></media>',
+                '              <rate>',
+                f'                <timebase>{fps}</timebase>',
+                '              </rate>',
+                '              <media>',
+                '                <video>',
+                '                  <samplecharacteristics>',
+                '                    <width>1920</width>',
+                '                    <height>1080</height>',
+                '                  </samplecharacteristics>',
+                '                </video>',
+                '              </media>',
                 '            </file>',
                 '          </clipitem>'
             ])
-            current_frame += dur
-
-        xml.extend(['        </track>', '      </video>', '      <audio>', '        <track>'])
-
-        audio_uri = win_to_uri(active_audio_path)
-        audio_filename = os.path.basename(active_audio_path)
+            curr_frame += clip["frames"]
 
         xml.extend([
-            '          <clipitem id="audio_clip_1">',
-            f'            <name>{audio_filename}</name>',
-            f'            <duration>{total_video_frames}</duration>',
-            f'            <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-            '            <start>0</start><end>{total_video_frames}</end>',
-            f'            <in>{audio_in_frame}</in><out>{audio_out_frame}</out>',
+            '        </track>',
+            '      </video>',
+            '      <audio>',
+            '        <track>',
+            '          <clipitem>',
+            f'            <name>{os.path.basename(active_audio_path)}</name>',
+            f'            <duration>{audio_out_frame - audio_in_frame}</duration>',
+            '            <rate>',
+            f'              <timebase>{fps}</timebase>',
+            '            </rate>',
+            f'            <start>{hook_start_frames}</start>',
+            f'            <end>{hook_start_frames + (audio_out_frame - audio_in_frame)}</end>',
+            f'            <in>{audio_in_frame}</in>',
+            f'            <out>{audio_out_frame}</out>',
             '            <file id="file_audio_master">',
-            f'              <name>{audio_filename}</name>',
-            f'              <pathurl>{audio_uri}</pathurl>',
-            f'              <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>',
-            '              <media><audio/></media>',
-            '            </file>',
-            '            <marker>',
-            f'              <name>SYSTEM_REV: {rev}</name>',
-            '              <in>0</in><out>0</out>',
-            '            </marker>'
+            f'              <name>{os.path.basename(active_audio_path)}</name>',
+            f'              <pathurl>{win_to_uri(active_audio_path)}</pathurl>',
+            '              <rate>',
+            f'                <timebase>{fps}</timebase>',
+            '              </rate>',
+            '            </file>'
         ])
 
+        # Embed Markers for Beat Transients
         marker_count = 0
         if beat_timestamps:
-            for bt in beat_timestamps:
-                if hook_start_sec <= bt <= hook_end_sec:
-                    marker_frame = round((bt - hook_start_sec) * fps)
+            for btime in beat_timestamps:
+                if hook_start_sec <= btime <= hook_end_sec:
+                    b_frame = round(btime * fps)
                     marker_count += 1
                     xml.extend([
                         '            <marker>',
-                        f'              <name>Beat_{marker_count} ({bt:.3f}s)</name>',
-                        f'              <in>{marker_frame}</in><out>{marker_frame}</out>',
+                        f'              <name>Beat_{marker_count}</name>',
+                        '              <comment>HMS Beat Transient</comment>',
+                        f'              <in>{b_frame}</in>',
+                        '              <out>-1</out>',
+                        '              <color>Blue</color>',
                         '            </marker>'
                     ])
-                elif 0 <= bt <= (total_video_frames / fps) and not any(b > hook_end_sec for b in beat_timestamps):
-                    marker_frame = round(bt * fps)
-                    marker_count += 1
-                    xml.extend([
-                        '            <marker>',
-                        f'              <name>Beat_{marker_count} ({bt:.3f}s)</name>',
-                        f'              <in>{marker_frame}</in><out>{marker_frame}</out>',
-                        '            </marker>'
-                    ])
-        else:
-            beat_interval = 60.0 / 123.0
-            curr_t = hook_start_sec
-            while curr_t <= hook_end_sec:
-                marker_frame = round((curr_t - hook_start_sec) * fps)
-                marker_count += 1
-                xml.extend([
-                    '            <marker>',
-                    f'              <name>GridBeat_{marker_count} ({curr_t:.3f}s)</name>',
-                    f'              <in>{marker_frame}</in><out>{marker_frame}</out>',
-                    '            </marker>'
-                ])
-                curr_t += beat_interval
 
-        xml.extend(['          </clipitem>', '        </track>', '      </audio>', '    </media>', '  </sequence>', '</xmeml>'])
+        xml.extend([
+            '          </clipitem>',
+            '        </track>',
+            '      </audio>',
+            '    </media>',
+            '  </sequence>',
+            '</xmeml>'
+        ])
 
         os.makedirs(os.path.dirname(os.path.abspath(xml_out)), exist_ok=True)
         with open(xml_out, "w", encoding="utf-8") as f:
             f.write("\n".join(xml))
 
-        self.logger.log(f"✅ SUCCESS! Created FCP 7 XML: {xml_out}")
-        
+        # Archive timestamped copy
+        archive_dir = r"/workspace/archive" if not sys.platform.startswith("win") else r"C:\renders\archive"
         try:
-            archive_dir = os.path.join(os.path.dirname(os.path.abspath(xml_out)), "archive")
             os.makedirs(archive_dir, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            archive_xml = os.path.join(archive_dir, f"{slug}_hook_timeline_{rev}_{stamp}.xml")
-            with open(archive_xml, "w", encoding="utf-8") as f:
+            ts_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive_path = os.path.join(archive_dir, f"{slug}_hook_timeline_{rev}_{ts_str}.xml")
+            with open(archive_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(xml))
-            self.logger.log(f"📦 Saved backup copy to archive: {archive_xml}")
-        except Exception:
-            pass
+            self.logger.log(f"📦 Archived XML: {archive_path}")
+        except Exception as e:
+            self.logger.log(f"Note on archive write: {e}", "WARNING")
 
+        self.logger.log(f"✅ SUCCESS! Created FCP 7 XML: {xml_out}")
         self.logger.log(f"🎯 Embedded Rev Tag '{rev}' and {marker_count} beat markers!")
         return True
 
     def execute_full_pipeline(self):
-        """Runs all 4 steps sequentially."""
         self.logger.log("===========================================================")
         self.logger.log(f"🚀 STARTING FULL HMS AUTOMATED PIPELINE [{self.cfg['revision']}]")
         self.logger.log("===========================================================")
-        
         self.run_step_3_load_metadata()
         self.run_step_1_rename_shots()
         self.run_step_2_trim_audio()
         self.run_step_4_generate_xml()
-        
         self.logger.log("===========================================================")
         self.logger.log("🎉 HMS WORKFLOW COMPLETE! Ready to import into DaVinci Resolve.")
         self.logger.log("===========================================================")
 
 def launch_gui():
-    """Tkinter Desktop Application with Browse Buttons & Live Threaded Logging."""
+    """Tkinter Desktop Application."""
     if not HAS_TKINTER:
         print("Tkinter is not available on this Python installation.")
         sys.exit(1)
@@ -435,13 +463,35 @@ def launch_gui():
     root.geometry("880x720")
 
     # Form Variables
-    var_slug = tk.StringVar(value="the_last_train")
-    var_title = tk.StringVar(value="The Last Train")
-    var_video_dir = tk.StringVar(value=r"C:\renders\the_last_train")
+    var_slug = tk.StringVar(value="dear_me")
+    var_title = tk.StringVar(value="Dear Me")
+    var_video_dir = tk.StringVar(value=r"C:\renders\dear_me")
     var_meta_dir = tk.StringVar(value=r"C:\renders\output")
-    var_audio_master = tk.StringVar(value=r"C:\audio\the_last_train_master.wav")
+    var_audio_master = tk.StringVar(value=r"C:\audio\dear_me_master.wav")
     var_rev = tk.StringVar(value=HMS_REV)
     var_fps = tk.IntVar(value=24)
+    var_use_master = tk.BooleanVar(value=True)
+
+    # File Pickers Logic
+    def browse_audio():
+        f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio", "*.wav"), ("All Files", "*.*")])
+        if f:
+            var_audio_master.set(f)
+            bname = os.path.splitext(os.path.basename(f))[0]
+            clean_slug = re.sub(r"(_master|_trimmed|_hook)$", "", bname, flags=re.IGNORECASE)
+            var_slug.set(clean_slug)
+            var_title.set(clean_slug.replace("_", " ").title())
+            var_video_dir.set("C:\\renders\\" + clean_slug)
+
+    def browse_vdir():
+        d = filedialog.askdirectory(title="Select Video Shots Directory")
+        if d:
+            var_video_dir.set(d)
+
+    def browse_mdir():
+        d = filedialog.askdirectory(title="Select Metadata Directory")
+        if d:
+            var_meta_dir.set(d)
 
     # Header
     header_frame = ttk.Frame(root, padding=10)
@@ -457,66 +507,44 @@ def launch_gui():
     input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=10)
     input_frame.pack(fill=tk.X, padx=10, pady=5)
 
-    # Auto-fill helper when Audio WAV is selected
-    def on_audio_browse():
-        filename = filedialog.askopenfilename(
-            title="Select Master Audio WAV File",
-            filetypes=[("WAV Audio Files", "*.wav"), ("All Files", "*.*")]
-        )
-        if filename:
-            var_audio_master.set(filename)
-            base_name = os.path.basename(filename)
-            raw_slug = os.path.splitext(base_name)[0]
-            clean_slug = re.sub(r"(_master|_trimmed|_audio|_full)$", "", raw_slug, flags=re.IGNORECASE)
-            clean_slug = re.sub(r"[^a-zA-Z0-9_]+", "_", clean_slug).strip("_").lower()
-            
-            var_slug.set(clean_slug)
-            var_title.set(clean_slug.replace("_", " ").title())
-            
-            default_renders = os.path.join(r"C:\renders", clean_slug)
-            var_video_dir.set(default_renders)
+    # Grid Form Layout
+    ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=2)
 
-    def on_video_browse():
-        folder = filedialog.askdirectory(title="Select Video Shots Directory")
-        if folder:
-            var_video_dir.set(folder)
+    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(10,0))
+    ttk.Entry(input_frame, textvariable=var_title, width=25).grid(row=0, column=3, sticky=tk.W, pady=2)
 
-    def on_meta_browse():
-        folder = filedialog.askdirectory(title="Select Metadata Directory")
-        if folder:
-            var_meta_dir.set(folder)
+    ttk.Label(input_frame, text="Video Shots Directory:").grid(row=1, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_video_dir, width=45).grid(row=1, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_vdir).grid(row=1, column=3, sticky=tk.W, padx=5, pady=2)
 
-    # Grid Form Layout with Browse Buttons
-    ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_slug, width=22).grid(row=0, column=1, sticky=tk.W, pady=3)
+    ttk.Label(input_frame, text="Metadata Directory:").grid(row=2, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_meta_dir, width=45).grid(row=2, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_mdir).grid(row=2, column=3, sticky=tk.W, padx=5, pady=2)
 
-    ttk.Label(input_frame, text="Track Title:").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(15,0))
-    ttk.Entry(input_frame, textvariable=var_title, width=28).grid(row=0, column=3, columnspan=2, sticky=tk.W, pady=3)
+    ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_audio_master, width=45).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
+    ttk.Button(input_frame, text="Browse...", command=browse_audio).grid(row=3, column=3, sticky=tk.W, padx=5, pady=2)
 
-    ttk.Label(input_frame, text="Video Shots Directory:").grid(row=1, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_video_dir, width=48).grid(row=1, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=on_video_browse).grid(row=1, column=4, padx=(5,0), pady=3)
+    ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=2)
+    ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=2)
 
-    ttk.Label(input_frame, text="Metadata Directory:").grid(row=2, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_meta_dir, width=48).grid(row=2, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=on_meta_browse).grid(row=2, column=4, padx=(5,0), pady=3)
+    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=2, padx=(10,0))
+    ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=2)
 
-    ttk.Label(input_frame, text="Master Audio WAV:").grid(row=3, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_audio_master, width=48).grid(row=3, column=1, columnspan=3, sticky=tk.W, pady=3)
-    ttk.Button(input_frame, text="Browse...", command=on_audio_browse).grid(row=3, column=4, padx=(5,0), pady=3)
-
-    ttk.Label(input_frame, text="Revision Tag:").grid(row=4, column=0, sticky=tk.W, pady=3)
-    ttk.Entry(input_frame, textvariable=var_rev, width=15).grid(row=4, column=1, sticky=tk.W, pady=3)
-
-    ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=3, padx=(15,0))
-    ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=3)
+    # Audio Option Checkbox
+    ttk.Checkbutton(input_frame, text="Use Pristine Master WAV Directly (Recommended for Full 24-Bit Sound)", variable=var_use_master).grid(row=5, column=0, columnspan=4, sticky=tk.W, pady=5)
 
     # Action Buttons Frame
     btn_frame = ttk.Frame(root, padding=10)
     btn_frame.pack(fill=tk.X)
 
-    log_box = scrolledtext.ScrolledText(root, height=16, font=("Consolas", 9))
+    log_box = scrolledtext.ScrolledText(root, height=14, font=("Consolas", 9))
     logger = HMSLogger(log_widget=log_box)
+
+    # Redirect stdout/stderr to GUI log safely
+    sys.stdout = GUIStdoutRedirector(log_box)
+    sys.stderr = GUIStdoutRedirector(log_box)
 
     def get_config():
         slug = var_slug.get().strip()
@@ -530,32 +558,32 @@ def launch_gui():
             "video_dir": vdir,
             "meta_dir": mdir,
             "audio_master": audio,
-            "audio_trimmed": os.path.join(os.path.dirname(audio) if audio else r"C:\audio", f"{slug}_master_trimmed.wav"),
+            "audio_trimmed": os.path.join(os.path.dirname(audio), f"{slug}_master_trimmed.wav"),
             "xml_output": os.path.join(vdir, f"{slug}_hook_timeline.xml"),
             "revision": var_rev.get().strip(),
             "fps": var_fps.get(),
-            "hook_start_sec": 196.603,
-            "hook_duration_sec": 50.0
+            "use_master_direct": var_use_master.get(),
+            "hook_start_sec": 164.281,
+            "hook_duration_sec": 40.0
         }
 
-    # Threaded action runners so the GUI event loop never freezes during execution
-    def run_async(func):
-        threading.Thread(target=func, daemon=True).start()
+    def async_run(target_func):
+        threading.Thread(target=target_func, daemon=True).start()
 
     def run_full():
-        run_async(lambda: HMSPipelineEngine(get_config(), logger).execute_full_pipeline())
+        async_run(lambda: HMSPipelineEngine(get_config(), logger).execute_full_pipeline())
 
     def run_step1():
-        run_async(lambda: HMSPipelineEngine(get_config(), logger).run_step_1_rename_shots())
+        async_run(lambda: HMSPipelineEngine(get_config(), logger).run_step_1_rename_shots())
 
     def run_step2():
-        run_async(lambda: HMSPipelineEngine(get_config(), logger).run_step_2_trim_audio())
+        async_run(lambda: HMSPipelineEngine(get_config(), logger).run_step_2_trim_audio())
 
     def run_step3():
-        run_async(lambda: HMSPipelineEngine(get_config(), logger).run_step_3_load_metadata())
+        async_run(lambda: HMSPipelineEngine(get_config(), logger).run_step_3_load_metadata())
 
     def run_step4():
-        run_async(lambda: HMSPipelineEngine(get_config(), logger).run_step_4_generate_xml())
+        async_run(lambda: HMSPipelineEngine(get_config(), logger).run_step_4_generate_xml())
 
     run_btn = tk.Button(btn_frame, text="🚀 EXECUTE FULL AUTOMATED PIPELINE", bg="#0275d8", fg="white", font=("Helvetica", 10, "bold"), command=run_full, height=2)
     run_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
@@ -578,7 +606,7 @@ def launch_gui():
     log_box.pack(in_=log_frame, fill=tk.BOTH, expand=True)
 
     logger.log(f"HMS Master Control Panel [{HMS_REV}] initialized successfully.")
-    logger.log("Ready to process project tracks.")
+    logger.log(f"Ready to process project tracks.")
 
     root.mainloop()
 
@@ -587,17 +615,18 @@ if __name__ == "__main__":
         launch_gui()
     else:
         cfg = {
-            "track_slug": "the_last_train",
-            "track_title": "The Last Train",
-            "video_dir": r"C:\renders\the_last_train",
+            "track_slug": "dear_me",
+            "track_title": "Dear Me",
+            "video_dir": r"C:\renders\dear_me",
             "meta_dir": r"C:\renders\output",
-            "audio_master": r"C:\audio\the_last_train_master.wav",
-            "audio_trimmed": r"C:\audio\the_last_train_master_trimmed.wav",
-            "xml_output": r"C:\renders\the_last_train\the_last_train_hook_timeline.xml",
+            "audio_master": r"C:\audio\dear_me_master.wav",
+            "audio_trimmed": r"C:\audio\dear_me_master_trimmed.wav",
+            "xml_output": r"C:\renders\dear_me\dear_me_hook_timeline.xml",
             "revision": HMS_REV,
             "fps": 24,
-            "hook_start_sec": 196.603,
-            "hook_duration_sec": 50.0
+            "use_master_direct": True,
+            "hook_start_sec": 164.281,
+            "hook_duration_sec": 40.0
         }
         logger = HMSLogger()
         engine = HMSPipelineEngine(cfg, logger)

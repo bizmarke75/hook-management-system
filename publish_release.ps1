@@ -5,12 +5,12 @@
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -ErrorAction SilentlyContinue
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "  HMS AUTOMATED GITHUB RELEASE & BUILD PUBLISHER" -ForegroundColor Cyan
+Write-Host "  [*] HMS AUTOMATED GITHUB RELEASE & BUILD PUBLISHER" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 # 1. Check if inside a Git repository
 if (-not (Test-Path ".git")) {
-    Write-Host "Error: Not in a Git repository directory!" -ForegroundColor Red
+    Write-Host "[ERROR] Not in a Git repository directory!" -ForegroundColor Red
     Write-Host "Please run this script from C:\github\projects\hook-management-system\" -ForegroundColor Yellow
     Exit 1
 }
@@ -24,13 +24,14 @@ if (Test-Path "hms_master_gui.py") {
     }
 }
 
-Write-Host "`nDetected Version in hms_master_gui.py: " -NoNewline
-Write-Host "$detectedVersion" -ForegroundColor Green
+Write-Host ""
+Write-Host "[INFO] Detected Version in hms_master_gui.py: " -NoNewline
+Write-Host $detectedVersion -ForegroundColor Green
 
 # 3. Prompt for Version Tag
-Write-Host "`nEnter release version tag [Press Enter for '$detectedVersion']: " -NoNewline -ForegroundColor Yellow
-$inputVersion = Read-Host
-
+Write-Host ""
+$promptVer = "Enter release version tag [Press Enter for " + $detectedVersion + "]"
+$inputVersion = Read-Host $promptVer
 if ([string]::IsNullOrWhitespace($inputVersion)) {
     $versionTag = $detectedVersion
 } else {
@@ -41,32 +42,34 @@ if ([string]::IsNullOrWhitespace($inputVersion)) {
 }
 
 # 4. Prompt for Commit Message
-$defaultCommit = "feat: release HMS $versionTag"
-Write-Host "Enter commit message [Press Enter for '$defaultCommit']: " -NoNewline -ForegroundColor Yellow
-$inputCommit = Read-Host
-
+$defaultCommit = "feat: release HMS " + $versionTag
+$promptCommit = "Enter commit message [Press Enter for '" + $defaultCommit + "']"
+$inputCommit = Read-Host $promptCommit
 if ([string]::IsNullOrWhitespace($inputCommit)) {
     $commitMsg = $defaultCommit
 } else {
     $commitMsg = $inputCommit.Trim()
 }
 
-Write-Host "`n----------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "Release Summary:" -ForegroundColor Yellow
-Write-Host "   Version Tag    : $versionTag"
-Write-Host "   Commit Message : $commitMsg"
+Write-Host ""
+Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+Write-Host "[SUMMARY] Release Configuration:" -ForegroundColor Yellow
+Write-Host ("   Version Tag    : " + $versionTag)
+Write-Host ("   Commit Message : " + $commitMsg)
 Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
 
-Write-Host "`nProceed with git commit, push, and release tag? (Y/n): " -NoNewline -ForegroundColor Yellow
-$confirm = Read-Host
-
-if ($confirm -and $confirm.Trim().ToLower() -ne "y" -and $confirm.Trim() -ne "") {
-    Write-Host "Cancelled." -ForegroundColor Yellow
-    Exit 0
+Write-Host ""
+$confirm = Read-Host "Proceed with git commit, push, and release tag? (Y/n)"
+if (-not [string]::IsNullOrWhitespace($confirm)) {
+    if ($confirm.Trim().ToLower() -ne "y") {
+        Write-Host "Cancelled." -ForegroundColor Yellow
+        Exit 0
+    }
 }
 
 # 5. Git Automation Steps
-Write-Host "`n[1/5] Staging files (git add .)..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "[1/5] Staging files (git add .)..." -ForegroundColor Cyan
 git add .
 
 Write-Host "[2/5] Committing changes..." -ForegroundColor Cyan
@@ -79,14 +82,15 @@ git push origin main
 git tag -d $versionTag 2>$null
 git push origin --delete $versionTag 2>$null
 
-Write-Host "[4/5] Creating release tag $versionTag..." -ForegroundColor Cyan
-git tag -a "$versionTag" -m "Release $versionTag"
+Write-Host ("[4/5] Creating release tag " + $versionTag + "...") -ForegroundColor Cyan
+git tag -a "$versionTag" -m ("Release " + $versionTag)
 
-Write-Host "[5/5] Pushing release tag to GitHub..." -ForegroundColor Cyan
+Write-Host "[5/5] Pushing release tag to GitHub (triggers automated build)..." -ForegroundColor Cyan
 git push origin "$versionTag"
 
-Write-Host "`n======================================================================" -ForegroundColor Green
-Write-Host "  RELEASE $versionTag SUCCESSFULLY PUBLISHED TO GITHUB!" -ForegroundColor Green
+Write-Host ""
+Write-Host "======================================================================" -ForegroundColor Green
+Write-Host ("  [SUCCESS] RELEASE " + $versionTag + " PUBLISHED TO GITHUB!") -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host "GitHub Actions is now compiling 'hms_master_gui.exe' automatically." -ForegroundColor White
-Write-Host "Check your repository's 'Actions' tab or 'Releases' page in a few minutes.`n" -ForegroundColor White
+Write-Host "Check your repository's 'Actions' tab or 'Releases' page in a few minutes." -ForegroundColor White

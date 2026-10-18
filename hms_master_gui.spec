@@ -1,16 +1,19 @@
-# -*- mode: python ; coding: utf-8 -*-
+﻿# -*- mode: python ; coding: utf-8 -*-
+import os
 
+datas_list = [('337west_icon.ico', '.')] if os.path.exists('337west_icon.ico') else []
+icon_file = ['337west_icon.ico'] if os.path.exists('337west_icon.ico') else None
 
 a = Analysis(
     ['hms_master_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas_list,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['setuptools'],
     noarchive=False,
     optimize=0,
 )
@@ -35,4 +38,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon_file,
 )
