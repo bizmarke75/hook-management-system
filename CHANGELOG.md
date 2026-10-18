@@ -2,30 +2,39 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
-## [v2.8.0] - 2026-10-17
-
-### Added
-- **Interactive Directory & File Browsing:** Added native `Browse...` buttons for Video Shots Directory, Metadata Directory, and Master Audio WAV selection in `hms_master_gui.py`.
-- **Automatic Track Slug & Title Auto-Fill:** Selecting a Master Audio WAV automatically strips common audio suffixes (`_master`, `_trimmed`, `_audio`, `_full`) and auto-populates Track Slug, Track Title, and suggested Video Shots Directory (`C:\renders\<track_slug>`).
-- **Multi-Output Archiving:** Generated timeline XMLs and trimmed WAV files are written as primary production files (`<track_slug>_hook_timeline.xml`) and simultaneously archived with timestamped revision tags (`<track_slug>_hook_timeline_v2.8.0_<timestamp>.xml`) in dedicated `archive/` subfolders.
-- **Dynamic Shot Duration Engine:** Automatically scans `video_dir` for all `shot*.mp4` files and uses OpenCV to measure precise frame counts and durations dynamically.
-- **Automated GitHub Release Suite (`publish_release.bat` & `publish_release.ps1`):** Complete one-click release publisher that extracts `HMS_REV`, prompts for optional version overrides, commits code, and pushes release tags to trigger GitHub Actions PyInstaller builds.
-- **Safe Console Redirection:** PyInstaller `--noconsole` builds redirect `sys.stdout` and `sys.stderr` safely to prevent startup logging crashes.
-
-### Fixed
-- Fixed unescaped literal newline syntax error in `build_exe.py` during GitHub Actions PyInstaller build steps.
-- Fixed Windows CMD batch string parsing when running `publish_release.bat`.
-
----
-
 ## [v2.6.0] - 2026-10-15
 
 ### Added
-- Executable builder scripts (`build_exe.py` and `build_exe.bat`) for standalone PyInstaller packaging.
+- **Interactive Directory Browsing:** Added native Tkinter `filedialog` support with `Browse...` buttons for Video Directory, Metadata Directory, and Master Audio WAV selection in `hms_master_gui.py`.
+- **Executable Builder Engine:** Created `build_exe.bat` and `build_exe.py` scripts to package `hms_master_gui.py` into a single standalone Windows executable (`dist/hms_master_gui.exe`) via PyInstaller.
+- **Dependency Manifest Update:** Added `pyinstaller>=6.0.0` to `requirements.txt`.
+
+### Fixed
+- Path handling and validation when selecting custom or non-standard folder locations outside `C:\renders\`.
 
 ---
 
 ## [v2.5.0] - 2026-10-15
 
 ### Added
-- Master GUI control panel consolidating shot renaming, audio trimming, beat loading, and XML generation.
+- **Master GUI Control Panel:** Single-window Tkinter desktop application (`hms_master_gui.py`) consolidating shot renaming, audio trimming, beat loading, and XML generation.
+- **Track Isolation Protocol:** Prefixing files with track slugs (`<track_slug>_...`) to prevent metadata overwrites across multi-song production runs.
+- **Sub-Second Audio Trimming:** Automatic wave cutter to prevent DaVinci Resolve audio offset dropouts.
+- **Revision Tagging Auditability:** Embedded `v2.5.0` system revision tags into FCP 7 XML root header, sequence title, and frame 0 markers.
+- **Live Logging System:** Simultaneous console logging and file logging (`C:\renders\hms_workflow.log`).
+
+---
+
+## [v2.0.0] - 2026-10-14
+
+### Added
+- **FCP 7 XML (`xmeml v5`) Engine:** Replaced FCPXML 1.9 to bypass DaVinci Resolve MP4 freeze-frame hold bugs.
+- **Track-Aware Transient Engine:** Support for parsing `thebeats.txt` and embedding blue timeline markers onto audio tracks.
+- **Sequential Shot Renamer:** Chronological ordering and renaming of MP4 render clips (`shot1.mp4` through `shot5.mp4`).
+
+---
+
+## [v1.0.0] - 2026-10-10
+
+### Added
+- Initial proof-of-concept CLI scripts for Suno AI audio blueprinting, Google Flow video generation, and DaVinci Resolve alignment.

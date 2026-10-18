@@ -1,7 +1,6 @@
 @echo off
-title HMS Executable Builder
 echo ============================================================
-echo   HMS Master GUI v2.8.0 - PyInstaller Executable Builder
+echo   HMS Master GUI v2.6.0 - PyInstaller Executable Builder
 echo ============================================================
 echo.
 
@@ -13,7 +12,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo [*] Building hms_master_gui.exe ...
-python build_exe.py
+pyinstaller --noconsole --onefile --name="hms_master_gui" hms_master_gui.py
 
 echo.
 if exist "dist\hms_master_gui.exe" (

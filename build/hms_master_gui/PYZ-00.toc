@@ -1,4 +1,4 @@
-('C:\\github\\projects\\hook-management-system\\hms-v2.8.0-suite\\build\\hms_master_gui\\PYZ-00.pyz',
+('C:\\github\\projects\\hook-management-system\\build\\hms_master_gui\\PYZ-00.pyz',
  [('__future__',
    'C:\\Users\\racer\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\__future__.py',
    'PYMODULE'),
