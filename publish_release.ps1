@@ -5,7 +5,7 @@
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -ErrorAction SilentlyContinue
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "  HMS AUTOMATED GITHUB RELEASE & BUILD PUBLISHER" -ForegroundColor Cyan
+Write-Host "  HMS AUTOMATED GITHUB RELEASE & BUILD PUBLISHER [v2.8.0]" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 # 1. Check if inside a Git repository
@@ -25,12 +25,12 @@ if (Test-Path "hms_master_gui.py") {
 }
 
 Write-Host ""
-Write-Host "[INFO] Detected Version in hms_master_gui.py: " -NoNewline -ForegroundColor Cyan
+Write-Host "Detected Version in hms_master_gui.py: " -NoNewline
 Write-Host "$detectedVersion" -ForegroundColor Green
+Write-Host ""
 
 # 3. Prompt for Version Tag
-Write-Host ""
-Write-Host "Enter release version tag [Press Enter for '$detectedVersion']: " -NoNewline -ForegroundColor Yellow
+Write-Host "Enter release version tag [Press Enter for $detectedVersion]: " -NoNewline -ForegroundColor Yellow
 $inputVersion = Read-Host
 if ([string]::IsNullOrWhitespace($inputVersion)) {
     $versionTag = $detectedVersion
@@ -43,7 +43,6 @@ if ([string]::IsNullOrWhitespace($inputVersion)) {
 
 # 4. Prompt for Commit Message
 $defaultCommit = "feat: release HMS $versionTag"
-Write-Host ""
 Write-Host "Enter commit message [Press Enter for '$defaultCommit']: " -NoNewline -ForegroundColor Yellow
 $inputCommit = Read-Host
 if ([string]::IsNullOrWhitespace($inputCommit)) {
@@ -58,11 +57,11 @@ Write-Host "Release Summary:" -ForegroundColor Yellow
 Write-Host "   Version Tag    : $versionTag"
 Write-Host "   Commit Message : $commitMsg"
 Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
-
 Write-Host ""
+
 Write-Host "Proceed with git commit, push, and release tag? (Y/n): " -NoNewline -ForegroundColor Yellow
 $confirm = Read-Host
-if ($confirm -and $confirm.Trim().ToLower() -ne "y" -and $confirm.Trim() -ne "") {
+if ($confirm -and $confirm.Trim().ToLower() -ne "y") {
     Write-Host "Cancelled." -ForegroundColor Yellow
     Exit 0
 }
