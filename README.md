@@ -1,60 +1,81 @@
-# Hook Management System (HMS) Architecture
+# Hook Management System (HMS)
 
-Automated concept-to-production pipeline for Suno AI music blueprinting, Google Flow (Veo 3.1 & Gemini Omni Flash) video generation, and DaVinci Resolve post-production synchronization.
-
----
-
-## 🚀 Key Capabilities (v2.7.0)
-
-- **Master Control Panel GUI (`hms_master_gui.py`):** Single-window Tkinter desktop app for track workflow automation.
-- **Dynamic Shot Discovery:** Automatically detects any number of `shot*.mp4` files (e.g. 4 shots at 10s each) and reads exact clip durations from MP4 file headers.
-- **Freeze-Frame Prevention:** FCP 7 XML (`xmeml v5`) generator explicitly embeds `<duration>` and `<samplecharacteristics>` tags in video `<file>` definitions to prevent DaVinci Resolve from importing MP4s as static still holds.
-- **Track Isolation & Revision Auditability:** Prefixing track slugs (`<slug>_...`) and embedding system revision tags (`v2.7.0`) into FCP 7 XML root headers and timeline markers.
-- **Sub-Second Audio Trimming:** Trims master WAV tracks to exact hook offsets to eliminate timeline drift.
-- **Cloud Automated Executables:** Automated Windows executable build and GitHub Release publishing via `.github/workflows/build_release.yml`.
+**Version:** `v2.5.0`  
+**Target Platform:** DaVinci Resolve Free / Studio (FCP 7 `xmeml v5` Protocol)  
+**Audio / Generative Stack:** Suno v5/v6, Librosa STFT, Google Flow / Veo 3.1  
 
 ---
 
-## 🛠️ Installation & Windows Executable Build
+## 📌 Overview
 
-### Running Python Script Directly
-```cmd
-python hms_master_gui.py
-```
-
-### Local Windows Executable Build (`.exe`)
-To package `hms_master_gui.py` into a standalone Windows executable with the **337West** custom icon:
-
-```cmd
-build_exe.bat
-```
-*Output executable will be generated at `dist\hms_master_gui.exe`.*
+The **Hook Management System (HMS)** is an automated pipeline designed to bridge AI audio engines, generative video models, and non-linear editors (NLEs). It eliminates manual timeline alignment and solves DaVinci Resolve's FCPXML import bugs (such as MP4 freeze-frame holds and dropped audio tracks) by producing strict, track-isolated **FCP 7 XML (`xmeml v5`)** sequence files with embedded transient beat markers.
 
 ---
 
-## 📦 Automated Release via GitHub Actions
+## 🛠️ Key Features
 
-Push a version tag to trigger a cloud build and automatically attach `hms_master_gui.exe` to your GitHub Releases page:
-
-```powershell
-git tag v2.7.0
-git push origin v2.7.0
-```
+- **Master GUI Control Panel (`hms_master_gui.py`):** Unified execution suite with system revision tracking (`v2.5.0`) and live logging to `C:\renders\hms_workflow.log`.
+- **Sub-Second Audio Trimming:** Automatically cuts master WAV files down to the exact hook section starting at frame 0 (`<track_slug>_master_trimmed.wav`) to prevent audio offset dropouts in DaVinci Resolve.
+- **Track-Aware File Isolation:** Naming conventions incorporate song slugs (e.g. `dear_me`, `paper_dolls`) to prevent overwriting metadata during multi-song production runs.
+- **Librosa & Text Transient Engine:** Parses custom `thebeats.txt` or calculates onset envelopes dynamically, embedding blue marker pins directly on the timeline audio track.
+- **FCP 7 XML Schema Enforcement:** Bypasses FCPXML 1.9 spine-nesting bugs by utilizing discrete `<track>` nodes for video and audio.
 
 ---
 
-## 📄 Repository Structure
+## 📁 Repository & File Architecture
 
 ```text
 hook-management-system/
-├── hms_master_gui.py         # Control Panel Application v2.7.0
-├── README.md                 # Project Documentation
-├── CHANGELOG.md              # Revision History
-├── 337west_icon.ico          # Windows Executable Icon
-├── build_exe.py              # PyInstaller Python Build Script
-├── build_exe.bat             # Batch Executable Launcher
-├── requirements.txt          # Dependency Manifest
-└── .github/
-    └── workflows/
-        └── build_release.yml # GitHub Actions Release Workflow
+├── README.md                   # System documentation & DaVinci Resolve SOP
+├── .gitignore                  # Media and log exclusions for Git
+├── requirements.txt            # Python dependencies
+├── hms_master_gui.py           # Master GUI Application (v2.5.0)
+├── run_hms_track_pipeline.py   # CLI Track-Aware Pipeline Engine
+├── trim_master_audio.py        # Standalone Sub-Second Wave Trimmer
+├── rename_shots.py             # Shot Sequencer (MP4 chronological renamer)
+└── docs/
+    └── davinci_import_sop.md   # Step-by-step import protocol
 ```
+
+---
+
+## ⚙️ Standard Operating Procedure (SOP) for DaVinci Resolve
+
+To guarantee zero guesswork when importing generated timelines:
+
+### 1. File Preparation
+Place track media according to the following conventions:
+- **Video Renders:** `C:\renders\<track_slug>\shot1.mp4` through `shot5.mp4`
+- **Master Audio:** `C:\audio\<track_slug>_master.wav`
+- **Transient Data (Optional):** `C:\renders\output\<track_slug>_thebeats.txt` & `<track_slug>_hooktimestamp.txt`
+
+### 2. Execution via Master GUI
+Run the GUI control panel:
+```cmd
+python hms_master_gui.py
+```
+Click **🚀 EXECUTE FULL AUTOMATED PIPELINE**. This will sequentially rename shots, trim audio to frame 0, load transient maps, and output `C:\renders\<track_slug>\<track_slug>_hook_timeline.xml`.
+
+### 3. DaVinci Resolve Project Setup
+1. Open DaVinci Resolve and press **Shift + 9** to open **Project Settings**.
+2. Set **Timeline Frame Rate** to **24 fps** (matching the generated XML).
+
+### 4. Timeline Import
+1. Press **Ctrl + Shift + I** (or go to **File > Import > Timeline...**).
+2. Select `C:\renders\<track_slug>\<track_slug>_hook_timeline.xml`.
+3. Enable **Snapping (N)** on the Edit Page so kinetic text titles and cuts magnetically align to the blue transient markers.
+
+---
+
+## 📄 System Revision Tracking
+
+All generated XML timelines embed the active system revision in three locations for full auditability:
+1. **XML Root Header:** `<!-- Generated by Hook Management System (HMS) Master GUI Engine [v2.5.0] -->`
+2. **Timeline Sequence Name:** `<track_title> Hook Video [v2.5.0]`
+3. **Frame 0 Marker:** `SYSTEM_REV: v2.5.0`
+
+---
+
+## 📝 License & Attribution
+
+Part of the **Advanced Audiovisual Production Architecture** suite for Suno, Google Flow, and DaVinci Resolve integration.

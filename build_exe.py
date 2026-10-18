@@ -1,54 +1,40 @@
 import os
-import sys
 import subprocess
+import sys
 
-# Force UTF-8 output encoding for Windows runners
-if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+def build():
+    print("="*60)
+    print("  HMS Master GUI v2.6.0 - Standalone Executable Builder")
+    print("="*60)
+    
+    # Check pyinstaller
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
-
-def main():
-    print("============================================================")
-    print(" Hook Management System (HMS) - PyInstaller Build Engine ")
-    print("============================================================")
-    
-    script_path = "hms_master_gui.py"
-    icon_path = "337west_icon.ico"
-    app_name = "hms_master_gui"
-    
-    if not os.path.exists(script_path):
-        print(f"Error: {script_path} not found in current directory.")
-        sys.exit(1)
+        import PyInstaller
+    except ImportError:
+        print("[*] Installing PyInstaller...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
         
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--noconsole",
         "--onefile",
-        f"--name={app_name}",
-        script_path
+        "--name=hms_master_gui",
+        "hms_master_gui.py"
     ]
     
-    if os.path.exists(icon_path):
-        cmd.insert(4, f"--icon={icon_path}")
-        print(f"Using icon: {icon_path}")
-    else:
-        print("Warning: 337west_icon.ico not found. Building with default icon.")
-        
-    print(f"Executing build command:\n{' '.join(cmd)}")
-    print("------------------------------------------------------------")
+    print("[*] Running command:", " ".join(cmd))
+    res = subprocess.call(cmd)
     
-    try:
-        subprocess.run(cmd, check=True)
-        print("------------------------------------------------------------")
-        print("[SUCCESS] BUILD COMPLETE!")
-        print(f"Executable generated at: {os.path.abspath(os.path.join('dist', f'{app_name}.exe'))}")
-        print("============================================================")
-    except subprocess.CalledProcessError as e:
-        print("------------------------------------------------------------")
-        print("[FAILED] BUILD FAILED! Check error output above.")
-        sys.exit(1)
+    if res == 0:
+        exe_path = os.path.abspath(os.path.join("dist", "hms_master_gui.exe"))
+        print("
+" + "="*60)
+        print(f" SUCCESS! Compiled executable ready at:
+ {exe_path}")
+        print("="*60)
+    else:
+        print("
+ [ERROR] Build failed.")
 
 if __name__ == "__main__":
-    main()
+    build()
