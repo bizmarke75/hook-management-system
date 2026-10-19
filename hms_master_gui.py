@@ -18,8 +18,13 @@ except ImportError:
 # System Revision Definition
 HMS_REV = "v2.8.0"
 
+def get_resource_path(relative_path):
+    """Resolve resource path for both standard Python and PyInstaller --onefile."""
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
 class GUIStdoutRedirector:
-    """Safely redirects stdout/stderr to GUI text widget without crashing if sys.stdout is None."""
+    """Safely redirects stdout/stderr to GUI text widget on the main UI thread."""
     def __init__(self, log_widget, level="INFO"):
         self.log_widget = log_widget
         self.level = level
@@ -29,17 +34,24 @@ class GUIStdoutRedirector:
             return
         if self.log_widget and HAS_TKINTER:
             try:
-                self.log_widget.insert(tk.END, message)
-                self.log_widget.see(tk.END)
-                self.log_widget.update_idletasks()
+                self.log_widget.after(0, self._append, message)
             except Exception:
                 pass
+
+    def _append(self, message):
+        try:
+            self.log_widget.configure(state=tk.NORMAL)
+            self.log_widget.insert(tk.END, message)
+            self.log_widget.see(tk.END)
+            self.log_widget.update_idletasks()
+        except Exception:
+            pass
 
     def flush(self):
         pass
 
 class HMSLogger:
-    """Handles dual logging to GUI text widget and file."""
+    """Handles dual logging to GUI text widget and file safely under --noconsole."""
     def __init__(self, log_widget=None, log_file_path=r"C:\renders\hms_workflow.log"):
         self.log_widget = log_widget
         self.log_file_path = log_file_path
@@ -49,27 +61,35 @@ class HMSLogger:
         except Exception:
             pass
 
+    def _write_to_gui(self, text):
+        try:
+            self.log_widget.configure(state=tk.NORMAL)
+            self.log_widget.insert(tk.END, text + "\n")
+            self.log_widget.see(tk.END)
+            self.log_widget.update_idletasks()
+        except Exception:
+            pass
+
     def log(self, message, level="INFO"):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         formatted = f"[{timestamp}] [{HMS_REV}] [{level}] {message}"
         
-        # Write to GUI log box safely
+        # 1. Write to GUI log box FIRST (scheduled safely on main thread)
         if self.log_widget and HAS_TKINTER:
             try:
-                self.log_widget.insert(tk.END, formatted + "\n")
-                self.log_widget.see(tk.END)
-                self.log_widget.update_idletasks()
+                self.log_widget.after(0, self._write_to_gui, formatted)
             except Exception:
                 pass
                 
-        # Write to stdout if available
-        if sys.stdout is not None:
+        # 2. Write to real stdout only if console is attached
+        if sys.__stdout__ is not None:
             try:
-                print(formatted)
+                sys.__stdout__.write(formatted + "\n")
+                sys.__stdout__.flush()
             except Exception:
                 pass
         
-        # Append to log file
+        # 3. Append to log file
         try:
             with open(self.log_file_path, "a", encoding="utf-8") as f:
                 f.write(formatted + "\n")
@@ -117,7 +137,6 @@ class HMSPipelineEngine:
         self.logger = logger
 
     def run_step_1_rename_shots(self):
-        """Step 1: Validate and rename MP4 files to shot1.mp4 ... shotN.mp4"""
         self.logger.log("--- STEP 1: VALIDATING AND RENAMING SHOTS ---")
         video_dir = self.cfg["video_dir"]
         
@@ -164,7 +183,6 @@ class HMSPipelineEngine:
         return True
 
     def run_step_2_trim_audio(self):
-        """Step 2: Trim master audio starting from hook timestamp."""
         self.logger.log("--- STEP 2: TRIMMING MASTER AUDIO ---")
         audio_master = self.cfg["audio_master"]
         trimmed_output = self.cfg["audio_trimmed"]
@@ -180,7 +198,6 @@ class HMSPipelineEngine:
                 params = wav_in.getparams()
                 n_channels, sample_width, framerate, n_frames = params[:4]
                 
-                # Check for 24-bit or floating-point WAV unsupported by stdlib wave
                 if sample_width not in (2, 4):
                     self.logger.log(f"Notice: Master audio uses {sample_width*8}-bit sample depth. Preserving original Master WAV to maintain pristine 24-bit sound quality.", "INFO")
                     return True
@@ -208,7 +225,6 @@ class HMSPipelineEngine:
             return True
 
     def run_step_3_load_metadata(self):
-        """Step 3: Parse track-aware beat transients and hook timestamps."""
         self.logger.log("--- STEP 3: LOADING METADATA & BEATS ---")
         slug = self.cfg["track_slug"]
         meta_dir = self.cfg["meta_dir"]
@@ -258,13 +274,12 @@ class HMSPipelineEngine:
                         beat_timestamps.append(t)
             self.logger.log(f"Loaded {len(beat_timestamps)} transient timestamps from '{beats_found}'")
         else:
-            self.logger.log(f"Beats file not found. Will fall back to 123.0 BPM grid.", "WARNING")
+            self.logger.log("Beats file not found. Will fall back to 123.0 BPM grid.", "WARNING")
 
         self.cfg["beat_timestamps"] = beat_timestamps
         return True
 
     def run_step_4_generate_xml(self):
-        """Step 4: Build FCP 7 XML (xmeml v5) with revision tracking metadata."""
         self.logger.log("--- STEP 4: GENERATING FCP 7 XML FOR DAVINCI RESOLVE ---")
         slug = self.cfg["track_slug"]
         title = self.cfg["track_title"]
@@ -276,7 +291,6 @@ class HMSPipelineEngine:
         use_master_direct = self.cfg.get("use_master_direct", True)
         beat_timestamps = self.cfg.get("beat_timestamps", [])
 
-        # Default shot list
         shots = [
             {"filename": "shot1.mp4", "duration_sec": 5.7083},
             {"filename": "shot2.mp4", "duration_sec": 8.0000},
@@ -294,10 +308,10 @@ class HMSPipelineEngine:
             total_video_frames += frames
 
         hook_start_frames = round(hook_start_sec * fps)
+        hook_end_sec = hook_start_sec + (total_video_frames / float(fps))
         trimmed_audio = self.cfg["audio_trimmed"]
         master_audio = self.cfg["audio_master"]
         
-        # Audio Selection Logic — Prefer Uncompressed Master WAV to avoid 24-bit/32-bit truncation distortion
         if not use_master_direct and os.path.exists(trimmed_audio):
             active_audio_path = trimmed_audio
             audio_in_frame = 0
@@ -309,7 +323,6 @@ class HMSPipelineEngine:
             audio_out_frame = hook_start_frames + total_video_frames
             self.logger.log(f"Using Master Audio File (Pristine 24-Bit Sound) with offset {hook_start_sec:.3f}s: {master_audio}")
 
-        # Construct XML
         xml = [
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<!DOCTYPE xmeml>',
@@ -336,7 +349,6 @@ class HMSPipelineEngine:
             '        <track>'
         ]
 
-        # Video Clips Placement
         curr_frame = hook_start_frames
         for idx, clip in enumerate(clips_data, start=1):
             file_uri = win_to_uri(clip["path"])
@@ -391,12 +403,18 @@ class HMSPipelineEngine:
             '              <rate>',
             f'                <timebase>{fps}</timebase>',
             '              </rate>',
-            '            </file>'
+            '            </file>',
+            '            <marker>',
+            f'              <name>SYSTEM_REV: {rev}</name>',
+            '              <comment>HMS Revision Audit Marker</comment>',
+            '              <in>0</in>',
+            '              <out>-1</out>',
+            '            </marker>'
         ])
 
-        # Embed Markers for Beat Transients
         marker_count = 0
         if beat_timestamps:
+            has_absolute_beats = any(b > hook_end_sec for b in beat_timestamps)
             for btime in beat_timestamps:
                 if hook_start_sec <= btime <= hook_end_sec:
                     b_frame = round(btime * fps)
@@ -410,6 +428,34 @@ class HMSPipelineEngine:
                         '              <color>Blue</color>',
                         '            </marker>'
                     ])
+                elif 0 <= btime <= (total_video_frames / float(fps)) and not has_absolute_beats:
+                    b_frame = round((hook_start_sec + btime) * fps)
+                    marker_count += 1
+                    xml.extend([
+                        '            <marker>',
+                        f'              <name>Beat_{marker_count}</name>',
+                        '              <comment>HMS Beat Transient</comment>',
+                        f'              <in>{b_frame}</in>',
+                        '              <out>-1</out>',
+                        '              <color>Blue</color>',
+                        '            </marker>'
+                    ])
+        else:
+            beat_interval = 60.0 / 123.0
+            curr_t = hook_start_sec
+            while curr_t <= hook_end_sec:
+                b_frame = round(curr_t * fps)
+                marker_count += 1
+                xml.extend([
+                    '            <marker>',
+                    f'              <name>GridBeat_{marker_count}</name>',
+                    '              <comment>123 BPM Fallback Grid</comment>',
+                    f'              <in>{b_frame}</in>',
+                    '              <out>-1</out>',
+                    '              <color>Blue</color>',
+                    '            </marker>'
+                ])
+                curr_t += beat_interval
 
         xml.extend([
             '          </clipitem>',
@@ -424,7 +470,6 @@ class HMSPipelineEngine:
         with open(xml_out, "w", encoding="utf-8") as f:
             f.write("\n".join(xml))
 
-        # Archive timestamped copy
         archive_dir = r"/workspace/archive" if not sys.platform.startswith("win") else r"C:\renders\archive"
         try:
             os.makedirs(archive_dir, exist_ok=True)
@@ -432,24 +477,24 @@ class HMSPipelineEngine:
             archive_path = os.path.join(archive_dir, f"{slug}_hook_timeline_{rev}_{ts_str}.xml")
             with open(archive_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(xml))
-            self.logger.log(f"📦 Archived XML: {archive_path}")
+            self.logger.log(f"Archived XML: {archive_path}")
         except Exception as e:
             self.logger.log(f"Note on archive write: {e}", "WARNING")
 
-        self.logger.log(f"✅ SUCCESS! Created FCP 7 XML: {xml_out}")
-        self.logger.log(f"🎯 Embedded Rev Tag '{rev}' and {marker_count} beat markers!")
+        self.logger.log(f"SUCCESS! Created FCP 7 XML: {xml_out}")
+        self.logger.log(f"Embedded Rev Tag '{rev}' and {marker_count} beat markers!")
         return True
 
     def execute_full_pipeline(self):
         self.logger.log("===========================================================")
-        self.logger.log(f"🚀 STARTING FULL HMS AUTOMATED PIPELINE [{self.cfg['revision']}]")
+        self.logger.log(f"STARTING FULL HMS AUTOMATED PIPELINE [{self.cfg['revision']}]")
         self.logger.log("===========================================================")
         self.run_step_3_load_metadata()
         self.run_step_1_rename_shots()
         self.run_step_2_trim_audio()
         self.run_step_4_generate_xml()
         self.logger.log("===========================================================")
-        self.logger.log("🎉 HMS WORKFLOW COMPLETE! Ready to import into DaVinci Resolve.")
+        self.logger.log("HMS WORKFLOW COMPLETE! Ready to import into DaVinci Resolve.")
         self.logger.log("===========================================================")
 
 def launch_gui():
@@ -460,7 +505,16 @@ def launch_gui():
 
     root = tk.Tk()
     root.title(f"Hook Management System (HMS) Master Control Panel [{HMS_REV}]")
-    root.geometry("880x720")
+    root.geometry("900x680")
+    root.minsize(780, 520)
+
+    # Load 337 West Icon
+    icon_path = get_resource_path("337west_icon.ico")
+    if os.path.exists(icon_path):
+        try:
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass
 
     # Form Variables
     var_slug = tk.StringVar(value="dear_me")
@@ -476,7 +530,7 @@ def launch_gui():
     def browse_audio():
         f = filedialog.askopenfilename(title="Select Master Audio WAV", filetypes=[("WAV Audio", "*.wav"), ("All Files", "*.*")])
         if f:
-            var_audio_master.set(f)
+            var_audio_master.set(f.replace('/', '\\'))
             bname = os.path.splitext(os.path.basename(f))[0]
             clean_slug = re.sub(r"(_master|_trimmed|_hook)$", "", bname, flags=re.IGNORECASE)
             var_slug.set(clean_slug)
@@ -486,28 +540,27 @@ def launch_gui():
     def browse_vdir():
         d = filedialog.askdirectory(title="Select Video Shots Directory")
         if d:
-            var_video_dir.set(d)
+            var_video_dir.set(d.replace('/', '\\'))
 
     def browse_mdir():
         d = filedialog.askdirectory(title="Select Metadata Directory")
         if d:
-            var_meta_dir.set(d)
+            var_meta_dir.set(d.replace('/', '\\'))
 
     # Header
-    header_frame = ttk.Frame(root, padding=10)
-    header_frame.pack(fill=tk.X)
-    title_lbl = ttk.Label(header_frame, text=f"🎬 Hook Management System (HMS) Control Center [{HMS_REV}]", font=("Helvetica", 14, "bold"))
+    header_frame = ttk.Frame(root, padding=(10, 8))
+    header_frame.pack(side=tk.TOP, fill=tk.X)
+    title_lbl = ttk.Label(header_frame, text=f"Hook Management System (HMS) Control Center [{HMS_REV}]", font=("Helvetica", 13, "bold"))
     title_lbl.pack(anchor=tk.W)
     sub_lbl = ttk.Label(header_frame, text="Automated Audio Trimming, Beat Syncing, and DaVinci FCP 7 XML Generation", font=("Helvetica", 9))
     sub_lbl.pack(anchor=tk.W)
 
-    ttk.Separator(root).pack(fill=tk.X, padx=10, pady=5)
+    ttk.Separator(root).pack(side=tk.TOP, fill=tk.X, padx=10, pady=2)
 
     # Inputs Frame
-    input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=10)
-    input_frame.pack(fill=tk.X, padx=10, pady=5)
+    input_frame = ttk.LabelFrame(root, text=" Project Configuration & Track Metadata ", padding=(10, 6))
+    input_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=4)
 
-    # Grid Form Layout
     ttk.Label(input_frame, text="Track Slug:").grid(row=0, column=0, sticky=tk.W, pady=2)
     ttk.Entry(input_frame, textvariable=var_slug, width=20).grid(row=0, column=1, sticky=tk.W, pady=2)
 
@@ -532,14 +585,27 @@ def launch_gui():
     ttk.Label(input_frame, text="Timeline FPS:").grid(row=4, column=2, sticky=tk.W, pady=2, padx=(10,0))
     ttk.Entry(input_frame, textvariable=var_fps, width=10).grid(row=4, column=3, sticky=tk.W, pady=2)
 
-    # Audio Option Checkbox
-    ttk.Checkbutton(input_frame, text="Use Pristine Master WAV Directly (Recommended for Full 24-Bit Sound)", variable=var_use_master).grid(row=5, column=0, columnspan=4, sticky=tk.W, pady=5)
+    ttk.Checkbutton(input_frame, text="Use Pristine Master WAV Directly (Recommended for Full 24-Bit Sound)", variable=var_use_master).grid(row=5, column=0, columnspan=4, sticky=tk.W, pady=4)
 
     # Action Buttons Frame
-    btn_frame = ttk.Frame(root, padding=10)
-    btn_frame.pack(fill=tk.X)
+    btn_frame = ttk.Frame(root, padding=(10, 4))
+    btn_frame.pack(side=tk.TOP, fill=tk.X)
 
-    log_box = scrolledtext.ScrolledText(root, height=14, font=("Consolas", 9))
+    # Log Output Frame â€” Packed with expand=True so it ALWAYS claims remaining window height
+    log_frame = ttk.LabelFrame(root, text=" Live Execution Console & System Logs (C:\\renders\\hms_workflow.log) ", padding=8)
+    log_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True, padx=10, pady=(4, 10))
+
+    log_box = scrolledtext.ScrolledText(
+        log_frame,
+        height=12,
+        bg="#1e1e1e",
+        fg="#d4d4d4",
+        insertbackground="white",
+        font=("Consolas", 9),
+        wrap=tk.WORD
+    )
+    log_box.pack(fill=tk.BOTH, expand=True)
+
     logger = HMSLogger(log_widget=log_box)
 
     # Redirect stdout/stderr to GUI log safely
@@ -585,28 +651,21 @@ def launch_gui():
     def run_step4():
         async_run(lambda: HMSPipelineEngine(get_config(), logger).run_step_4_generate_xml())
 
-    run_btn = tk.Button(btn_frame, text="🚀 EXECUTE FULL AUTOMATED PIPELINE", bg="#0275d8", fg="white", font=("Helvetica", 10, "bold"), command=run_full, height=2)
-    run_btn.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+    def clear_log():
+        log_box.delete("1.0", tk.END)
+        logger.log("Console cleared.")
 
-    s1_btn = ttk.Button(btn_frame, text="1. Rename Shots", command=run_step1)
-    s1_btn.pack(side=tk.LEFT, padx=2)
+    run_btn = tk.Button(btn_frame, text="EXECUTE FULL AUTOMATED PIPELINE", bg="#0275d8", fg="white", font=("Helvetica", 10, "bold"), command=run_full, height=2)
+    run_btn.pack(side=tk.LEFT, padx=(0, 6), expand=True, fill=tk.X)
 
-    s2_btn = ttk.Button(btn_frame, text="2. Trim Audio", command=run_step2)
-    s2_btn.pack(side=tk.LEFT, padx=2)
-
-    s3_btn = ttk.Button(btn_frame, text="3. Load Metadata", command=run_step3)
-    s3_btn.pack(side=tk.LEFT, padx=2)
-
-    s4_btn = ttk.Button(btn_frame, text="4. Build FCP XML", command=run_step4)
-    s4_btn.pack(side=tk.LEFT, padx=2)
-
-    # Log Output Frame
-    log_frame = ttk.LabelFrame(root, text=" Live Execution Console & System Logs ", padding=10)
-    log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-    log_box.pack(in_=log_frame, fill=tk.BOTH, expand=True)
+    ttk.Button(btn_frame, text="1. Rename Shots", command=run_step1).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_frame, text="2. Trim Audio", command=run_step2).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_frame, text="3. Load Metadata", command=run_step3).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_frame, text="4. Build FCP XML", command=run_step4).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_frame, text="Clear Log", command=clear_log).pack(side=tk.LEFT, padx=(6, 0))
 
     logger.log(f"HMS Master Control Panel [{HMS_REV}] initialized successfully.")
-    logger.log(f"Ready to process project tracks.")
+    logger.log("Live Console online. Click 'EXECUTE FULL AUTOMATED PIPELINE' or any individual step button.")
 
     root.mainloop()
 

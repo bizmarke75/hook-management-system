@@ -1,96 +1,81 @@
 # ==============================================================================
-# HMS Automated Git Release & Build Script (publish_release.ps1)
+# Script: publish_release.ps1
+# Version: 3.0.0
+# Description: Automates git staging, commit, version tagging, and push to origin
+#              to trigger the GitHub Actions CI/CD release build.
 # ==============================================================================
 
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -ErrorAction SilentlyContinue
+[CmdletBinding()]
+param(
+    [string]$Tag = "v3.0.0",
+    [string]$Message = "Release Hook Management System v3.0.0",
+    [switch]$NonInteractive = $false
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ScriptDir
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "  [*] HMS AUTOMATED GITHUB RELEASE & BUILD PUBLISHER" -ForegroundColor Cyan
+Write-Host " [HMS] AUTOMATED GITHUB RELEASE & BUILD PUBLISHER" -ForegroundColor Cyan
+Write-Host " 337 West Productions | Lancaster, PA" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
-# 1. Check if inside a Git repository
+# Ensure git tracking is present
 if (-not (Test-Path ".git")) {
-    Write-Host "[ERROR] Not in a Git repository directory!" -ForegroundColor Red
-    Write-Host "Please run this script from C:\github\projects\hook-management-system\" -ForegroundColor Yellow
-    Exit 1
+    Write-Host "[ERROR] .git directory not found. Must run from repository root." -ForegroundColor Red
+    exit 1
 }
 
-# 2. Extract current version from hms_master_gui.py
-$detectedVersion = "v2.8.0"
-if (Test-Path "hms_master_gui.py") {
-    $match = Select-String -Path "hms_master_gui.py" -Pattern 'HMS_REV\s*=\s*"(v[^"]+)"'
-    if ($match) {
-        $detectedVersion = $match.Matches[0].Groups[1].Value
+# Interactive configuration prompt
+if (-not $NonInteractive) {
+    $promptVersion = Read-Host "`nEnter release version tag [Press Enter for default: $Tag]"
+    if (-not [string]::IsNullOrWhiteSpace($promptVersion)) {
+        $Tag =$promptVersion.Trim()
+    }
+
+    $promptMsg = Read-Host "Enter release commit message [Press Enter for default: $Message]"
+    if (-not [string]::IsNullOrWhiteSpace($promptMsg)) {
+        $Message =$promptMsg.Trim()
+    }
+
+    Write-Host "`nRelease Plan:" -ForegroundColor Yellow
+    Write-Host "  Version Tag    : $Tag" -ForegroundColor White
+    Write-Host "  Commit Message : $Message" -ForegroundColor White
+
+    $confirm = Read-Host "`nProceed with git commit, push, and release tag? (Y/n)"
+    if ($confirm -match '^[Nn]') {
+        Write-Host "[ABORT] Release cancelled by user." -ForegroundColor Yellow
+        exit 0
     }
 }
 
-Write-Host ""
-Write-Host "[INFO] Detected Version in hms_master_gui.py: " -NoNewline
-Write-Host $detectedVersion -ForegroundColor Green
+# 1. Stage changes
+Write-Host "`n[GIT] Staging changes (git add -A)..." -ForegroundColor Cyan
+git add -A
 
-# 3. Prompt for Version Tag
-Write-Host ""
-$promptVer = "Enter release version tag [Press Enter for " + $detectedVersion + "]"
-$inputVersion = Read-Host $promptVer
-if ([string]::IsNullOrWhitespace($inputVersion)) {
-    $versionTag = $detectedVersion
+# 2. Commit modifications if working tree is dirty
+Write-Host "[GIT] Committing changes..." -ForegroundColor Cyan
+$status = git status --porcelain
+if ($status) {
+    git commit -m $Message
+    Write-Host "[OK] Changes committed successfully." -ForegroundColor Green
 } else {
-    $versionTag = $inputVersion.Trim()
-    if (-not $versionTag.StartsWith("v")) {
-        $versionTag = "v" + $versionTag
-    }
+    Write-Host "[INFO] No staged modifications to commit. Proceeding to tagging." -ForegroundColor Yellow
 }
 
-# 4. Prompt for Commit Message
-$defaultCommit = "feat: release HMS " + $versionTag
-$promptCommit = "Enter commit message [Press Enter for '" + $defaultCommit + "']"
-$inputCommit = Read-Host $promptCommit
-if ([string]::IsNullOrWhitespace($inputCommit)) {
-    $commitMsg = $defaultCommit
-} else {
-    $commitMsg = $inputCommit.Trim()
-}
+# 3. Apply annotated release tag
+Write-Host "[GIT] Creating annotated tag: $Tag..." -ForegroundColor Cyan
+git tag -a $Tag -m $Message -f
 
-Write-Host ""
-Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "[SUMMARY] Release Configuration:" -ForegroundColor Yellow
-Write-Host ("   Version Tag    : " + $versionTag)
-Write-Host ("   Commit Message : " + $commitMsg)
-Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+# 4. Push branch and tag to remote
+Write-Host "[GIT] Pushing current branch to origin..." -ForegroundColor Cyan
+git push origin HEAD
 
-Write-Host ""
-$confirm = Read-Host "Proceed with git commit, push, and release tag? (Y/n)"
-if (-not [string]::IsNullOrWhitespace($confirm)) {
-    if ($confirm.Trim().ToLower() -ne "y") {
-        Write-Host "Cancelled." -ForegroundColor Yellow
-        Exit 0
-    }
-}
+Write-Host "[GIT] Pushing release tag $Tag to origin..." -ForegroundColor Cyan
+git push origin $Tag --force
 
-# 5. Git Automation Steps
-Write-Host ""
-Write-Host "[1/5] Staging files (git add .)..." -ForegroundColor Cyan
-git add .
-
-Write-Host "[2/5] Committing changes..." -ForegroundColor Cyan
-git commit -m "$commitMsg"
-
-Write-Host "[3/5] Pushing to main branch..." -ForegroundColor Cyan
-git push origin main
-
-# Delete tag locally/remotely if it already exists to allow re-tagging
-git tag -d $versionTag 2>$null
-git push origin --delete $versionTag 2>$null
-
-Write-Host ("[4/5] Creating release tag " + $versionTag + "...") -ForegroundColor Cyan
-git tag -a "$versionTag" -m ("Release " + $versionTag)
-
-Write-Host "[5/5] Pushing release tag to GitHub (triggers automated build)..." -ForegroundColor Cyan
-git push origin "$versionTag"
-
-Write-Host ""
+Write-Host "`n======================================================================" -ForegroundColor Green
+Write-Host " [SUCCESS] Release $Tag published successfully!" -ForegroundColor Green
+Write-Host " GitHub Actions build triggered: .github/workflows/build_release.yml" -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green
-Write-Host ("  [SUCCESS] RELEASE " + $versionTag + " PUBLISHED TO GITHUB!") -ForegroundColor Green
-Write-Host "======================================================================" -ForegroundColor Green
-Write-Host "GitHub Actions is now compiling 'hms_master_gui.exe' automatically." -ForegroundColor White
-Write-Host "Check your repository's 'Actions' tab or 'Releases' page in a few minutes." -ForegroundColor White
