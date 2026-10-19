@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="5">
+  <sequence>
+    <name>HMS_THE_LAST_TRAIN_TIMELINE</name>
+    <duration>960</duration>
+    <rate>
+      <timebase>24</timebase>
+      <ntsc>FALSE</ntsc>
+    </rate>
+    <media>
+      <video>
+        <format>
+          <samplecharacteristics>
+            <width>1920</width>
+            <height>1080</height>
+          </samplecharacteristics>
+        </format>
+        <track>
+          <clipitem>
+            <name>shot1.mp4</name>
+            <duration>192</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>0</start>
+            <end>192</end>
+            <in>0</in>
+            <out>192</out>
+            <file id="file_0">
+              <name>shot1.mp4</name>
+              <pathurl>file://localhost/C:/renders/the_last_train/shot1.mp4</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+          </clipitem>
+          <clipitem>
+            <name>shot2.mp4</name>
+            <duration>192</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>192</start>
+            <end>384</end>
+            <in>0</in>
+            <out>192</out>
+            <file id="file_1">
+              <name>shot2.mp4</name>
+              <pathurl>file://localhost/C:/renders/the_last_train/shot2.mp4</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+          </clipitem>
+          <clipitem>
+            <name>shot3.mp4</name>
+            <duration>192</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>384</start>
+            <end>576</end>
+            <in>0</in>
+            <out>192</out>
+            <file id="file_2">
+              <name>shot3.mp4</name>
+              <pathurl>file://localhost/C:/renders/the_last_train/shot3.mp4</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+          </clipitem>
+          <clipitem>
+            <name>shot4.mp4</name>
+            <duration>192</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>576</start>
+            <end>768</end>
+            <in>0</in>
+            <out>192</out>
+            <file id="file_3">
+              <name>shot4.mp4</name>
+              <pathurl>file://localhost/C:/renders/the_last_train/shot4.mp4</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+          </clipitem>
+          <clipitem>
+            <name>shot5.mp4</name>
+            <duration>192</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>768</start>
+            <end>960</end>
+            <in>0</in>
+            <out>192</out>
+            <file id="file_4">
+              <name>shot5.mp4</name>
+              <pathurl>file://localhost/C:/renders/the_last_train/shot5.mp4</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+          </clipitem>
+        </track>
+      </video>
+      <audio>
+        <track>
+          <clipitem>
+            <name>the_last_train_master_trimmed.wav</name>
+            <duration>960</duration>
+            <rate><timebase>24</timebase></rate>
+            <start>0</start>
+            <end>960</end>
+            <in>0</in>
+            <out>960</out>
+            <file id="audio_master">
+              <name>the_last_train_master_trimmed.wav</name>
+              <pathurl>file://localhost/C:/audio/the_last_train_master_trimmed.wav</pathurl>
+              <rate><timebase>24</timebase></rate>
+            </file>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>1</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>13</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>26</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>38</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>50</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>62</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>75</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>87</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>99</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>112</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>124</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>136</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>148</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>161</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>173</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>185</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>197</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>210</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>222</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>234</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>246</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>259</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>271</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>283</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>295</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>307</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>319</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>332</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>344</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>356</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>368</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>381</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>393</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>405</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>417</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>430</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>442</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>454</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>467</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>479</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>491</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>503</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>514</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>527</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>540</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>552</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>564</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>576</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>589</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>601</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>613</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>625</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>638</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>650</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>662</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>674</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>687</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>699</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>711</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>723</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>736</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>748</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>760</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>772</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>784</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>796</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>809</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>821</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>833</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>845</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>858</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>870</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>882</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>895</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>907</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>919</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>931</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>943</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+            <marker>
+              <name>BEAT</name>
+              <comment>Transient Pin</comment>
+              <in>955</in>
+              <out>-1</out>
+              <color>Blue</color>
+            </marker>
+          </clipitem>
+        </track>
+      </audio>
+    </media>
+  </sequence>
+</xmeml>

@@ -1,40 +1,36 @@
-import os
+"""
+Hook Management System (HMS) - Executable Compiler
+Version: 3.0.0 | 337 West Productions
+"""
 import subprocess
 import sys
+from pathlib import Path
+
 
 def build():
-    print("="*60)
-    print("  HMS Master GUI v2.6.0 - Standalone Executable Builder")
-    print("="*60)
+    print("[BUILD] Compiling HMS Master GUI v3.0.0...")
+    spec_file = Path("hms_master_gui.spec")
     
-    # Check pyinstaller
-    try:
-        import PyInstaller
-    except ImportError:
-        print("[*] Installing PyInstaller...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-        
+    if not spec_file.exists():
+        print(f"[ERROR] Specification file not found: {spec_file.resolve()}")
+        sys.exit(1)
+
     cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--noconsole",
-        "--onefile",
-        "--name=hms_master_gui",
-        "hms_master_gui.py"
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--clean",
+        "--noconfirm",
+        str(spec_file)
     ]
-    
-    print("[*] Running command:", " ".join(cmd))
-    res = subprocess.call(cmd)
-    
-    if res == 0:
-        exe_path = os.path.abspath(os.path.join("dist", "hms_master_gui.exe"))
-        print("
-" + "="*60)
-        print(f" SUCCESS! Compiled executable ready at:
- {exe_path}")
-        print("="*60)
-    else:
-        print("
- [ERROR] Build failed.")
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("[SUCCESS] Build succeeded. Output binary: dist/hms_master_gui.exe")
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] PyInstaller failed with exit code {e.returncode}")
+        sys.exit(e.returncode)
+
 
 if __name__ == "__main__":
     build()
