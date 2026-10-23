@@ -6,25 +6,26 @@ Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
 Standard: modular-python-builder
 """
 
-import os
-import sys
-import re
+import json
 import math
-import time
+import os
 import queue
-import urllib.parse
+import re
+import subprocess
+import sys
 import threading
+import time
 import traceback
+import urllib.parse
 import uuid
 from pathlib import Path
-from xml.sax.saxutils import escape
+from xml.etree import ElementTree as ET
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-
+import librosa
 import numpy as np
 import soundfile as sf
-import librosa
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, ttk
 
 try:
     from PIL import Image
@@ -35,14 +36,128 @@ MAX_ANALYSIS_FILE_MB = 512
 
 
 # ==============================================================================
+# GLOBAL HELPERS
+# ==============================================================================
+
+
+def _validate_bpm(bpm_value: float) -> float:
+    bpm = float(bpm_value)
+    if not 40.0 <= bpm <= 300.0:
+        raise ValueError(f"Target BPM must be between 40 and 300 (got {bpm}).")
+    return bpm
+
+
+def _validate_duration(duration_value: float) -> float:
+    duration = float(duration_value)
+    if duration <= 0:
+        raise ValueError("Duration must be positive.")
+    if duration > 600:
+        raise ValueError("Duration exceeds the maximum supported value (600s).")
+    return duration
+
+
+def _validate_audio_analysis_size(audio_file: Path) -> None:
+    if not audio_file.exists():
+        raise FileNotFoundError(f"Source audio file not found: {audio_file}")
+
+    file_size_mb = audio_file.stat().st_size / (1024 * 1024)
+    if file_size_mb > MAX_ANALYSIS_FILE_MB:
+        raise ValueError(
+            f"Audio file is too large for in-memory analysis ({file_size_mb:.1f} MB > {MAX_ANALYSIS_FILE_MB} MB). "
+            "Use a smaller source or a streaming analysis path in a future release."
+        )
+
+
+def probe_media(path: Path) -> dict:
+    """Uses ffprobe to retrieve real media metadata for audio/video files."""
+    if not path.exists():
+        raise FileNotFoundError(f"Media file not found: {path}")
+
+    cmd = [
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
+        "-show_streams",
+        str(path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+
+    streams = data.get("streams", [])
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+
+    def as_float(value, default):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def as_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    duration = as_float(data.get("format", {}).get("duration"), 0.0)
+    if duration <= 0 and video:
+        duration = as_float(video.get("duration"), 0.0)
+    if duration <= 0 and audio:
+        duration = as_float(audio.get("duration"), 0.0)
+
+    return {
+        "width": as_int(video.get("width"), 1920) if video else 1920,
+        "height": as_int(video.get("height"), 1080) if video else 1080,
+        "fps": video.get("r_frame_rate", "24/1") if video else "24/1",
+        "samplerate": as_int(audio.get("sample_rate"), 44100) if audio else 44100,
+        "channels": as_int(audio.get("channels"), 2) if audio else 2,
+        "duration": duration if duration > 0 else 0.0,
+    }
+
+
+def _verify_video_dimensions(v_file: Path) -> tuple[int, int] | None:
+    if Image is None:
+        return None
+
+    try:
+        with Image.open(v_file) as img:
+            return img.size
+    except Exception:
+        return None
+
+
+def _frame_distribution_by_duration(video_files: list[Path], total_duration: float, fps: int) -> list[int]:
+    tracked = []
+    for v_file in video_files:
+        meta = probe_media(v_file)
+        tracked.append(max(meta.get("duration", total_duration / max(len(video_files), 1)), 0.01))
+
+    total_weight = sum(tracked)
+    if total_weight <= 0:
+        return [int(round((total_duration * fps) / len(video_files))) for _ in video_files]
+
+    target_total = int(round(total_duration * fps))
+    raw_alloc = [target_total * (w / total_weight) for w in tracked]
+    allocations = [int(math.floor(v)) for v in raw_alloc]
+    remainder = target_total - sum(allocations)
+
+    if remainder > 0:
+        order = sorted(range(len(allocations)), key=lambda i: raw_alloc[i] - allocations[i], reverse=True)
+        for idx in order[:remainder]:
+            allocations[idx] += 1
+
+    return allocations
+
+
+# ==============================================================================
 # THREAD-SAFE CONSOLE REDIRECTOR
 # ==============================================================================
 
 class SafeLogRedirector:
-    """
-    Thread-safe stream redirector capturing stdout/stderr into both the
-    native CLI console and the Tkinter ScrolledText widget.
-    """
+    """Thread-safe stream redirector capturing stdout/stderr into the Tk console."""
+
     def __init__(self, text_widget, original_stream):
         self.text_widget = text_widget
         self.original_stream = original_stream
@@ -71,46 +186,13 @@ class SafeLogRedirector:
 # ==============================================================================
 
 
-def _validate_bpm(bpm_value: float) -> float:
-    bpm = float(bpm_value)
-    if not 40.0 <= bpm <= 300.0:
-        raise ValueError(f"BPM must be between 40 and 300 (got {bpm}).")
-    return bpm
-
-
-def _validate_audio_analysis_size(audio_file: Path) -> None:
-    if not audio_file.exists():
-        raise FileNotFoundError(f"Source audio file not found: {audio_file}")
-
-    file_size_mb = audio_file.stat().st_size / (1024 * 1024)
-    if file_size_mb > MAX_ANALYSIS_FILE_MB:
-        raise ValueError(
-            f"Audio file is too large for in-memory analysis ({file_size_mb:.1f} MB > {MAX_ANALYSIS_FILE_MB} MB). "
-            "Use a smaller source or a streaming analysis path in a future release."
-        )
-
-
-def _verify_video_dimensions(v_file: Path) -> tuple[int, int] | None:
-    if Image is None:
-        return None
-
-    try:
-        with Image.open(v_file) as img:
-            width, height = img.size
-            return width, height
-    except Exception:
-        return None
-
-
 def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 170.0, window_duration: float = 40.0) -> dict:
-    """
-    Detects the peak RMS energy 40.0s hook window and tracks beat transients.
-    Calculates relative timestamps (0.000s to 40.000s) for timeline synchronization.
-    """
+    """Detects the peak RMS energy 40.0s hook window and tracks beat transients."""
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
     _validate_audio_analysis_size(audio_file)
     bpm = _validate_bpm(target_bpm)
+    window_duration = _validate_duration(window_duration)
 
     output_dir = Path("output").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,7 +250,7 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
         "hook_end_s": hook_end_s,
         "duration": window_duration,
         "detected_bpm": tempo_val,
-        "beats": relative_beats
+        "beats": relative_beats,
     }
 
 
@@ -183,10 +265,7 @@ def natural_sort_key(s):
 
 
 def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
-    """
-    Audits and renames render video clips sequentially (shot1.mp4 ... shotN.mp4)
-    using natural numerical sorting to eliminate timeline sequencing gaps.
-    """
+    """Renames render clips into a safe, zero-collision shot sequence."""
     print(f"\n[RUN] Step 1: Auditing and standardizing render clips in '{renders_dir}'...")
     r_path = Path(renders_dir).resolve()
     if not r_path.exists():
@@ -201,22 +280,15 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     video_files.sort(key=lambda p: natural_sort_key(p.name))
     print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
 
-    temp_paths = []
-    for idx, old_file in enumerate(video_files, start=1):
-        temp_name = f"__hms_tmp_{slug}_{idx}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.mp4"
-        temp_path = r_path / temp_name
-        old_file.rename(temp_path)
-        temp_paths.append((temp_path, idx))
+    temp_files = []
+    for index, current in enumerate(video_files):
+        temp_path = r_path / f"__hms_tmp_{slug}_{index}_{uuid.uuid4().hex[:8]}.tmp"
+        current.rename(temp_path)
+        temp_files.append(temp_path)
 
     renamed_files = []
-    for temp_path, idx in temp_paths:
-        target_name = f"shot{idx}.mp4"
-        target_path = r_path / target_name
-
-        if target_path.exists() and target_path != temp_path:
-            backup_name = f"__hms_backup_{uuid.uuid4().hex[:8]}_{target_name}"
-            target_path.rename(r_path / backup_name)
-
+    for index, temp_path in enumerate(temp_files, start=1):
+        target_path = r_path / f"shot{index}.mp4"
         temp_path.rename(target_path)
         renamed_files.append(target_path)
 
@@ -230,10 +302,7 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
 
 
 def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
-    """
-    Trims master audio exactly to the 40.000s hook window using SoundFile.
-    Bypasses BWF chunk errors (bext, LIST, JUNK) and exports a clean 24-bit stereo WAV.
-    """
+    """Trims master audio exactly to the configured hook window using SoundFile."""
     print(f"\n[RUN] Step 2: Extracting 24-bit PCM master audio slice using SoundFile backend...")
     output_dir = Path("output").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -258,10 +327,9 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
         reader.seek(start_frame)
         audio_data = reader.read(frames=total_frames, dtype="float32")
 
-    if len(audio_data) < total_frames:
+    if len(audio_data) != total_frames:
         raise ValueError(
-            f"Short read while trimming audio: requested {total_frames} frames but only {len(audio_data)} frames were read. "
-            f"Input file may be shorter than expected."
+            f"Expected {total_frames} frames, got {len(audio_data)} while trimming '{audio_path}'."
         )
 
     sf.write(str(target_wav), audio_data, samplerate=sr, subtype="PCM_24")
@@ -280,9 +348,7 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
 
 
 def run_step_3_sync_metadata(slug: str) -> dict:
-    """
-    Validates output assets and reads cached beat transient timestamps.
-    """
+    """Validates output assets and reads cached beat transient timestamps."""
     print(f"\n[RUN] Step 3: Verifying pipeline state and metadata for '{slug}'...")
     output_dir = Path("output").resolve()
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
@@ -307,11 +373,10 @@ def run_step_3_sync_metadata(slug: str) -> dict:
 
 
 def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, total_duration: float = 40.0) -> Path:
-    """
-    Generates an Apple Final Cut Pro 7 XML timeline for DaVinci Resolve Free.
-    Assembles gapless video shots across exactly 960 frames and pins blue beat markers.
-    """
+    """Generates a valid FCP7-compatible XML timeline using real media metadata."""
     print(f"\n[RUN] Step 4: Assembling Apple FCP 7 XML timeline for '{slug}'...")
+    total_duration = _validate_duration(total_duration)
+
     output_dir = Path("output").resolve()
     audio_wav = output_dir / f"{slug}_master_audio.wav"
     beats_file = output_dir / f"{slug}_thebeats.txt"
@@ -319,12 +384,12 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     if not audio_wav.exists() or not beats_file.exists():
         raise FileNotFoundError("Missing master audio or beats file in output/. Run Steps 0-3 first.")
 
+    audio_meta = probe_media(audio_wav)
+    sample_rate = audio_meta["samplerate"]
+    channel_count = audio_meta["channels"]
+
     total_frames = int(round(total_duration * fps))
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
-
-    with sf.SoundFile(str(audio_wav), "r") as audio_reader:
-        audio_samplerate = audio_reader.samplerate
-        audio_channels = audio_reader.channels
 
     r_path = Path(renders_dir).resolve()
     video_files = [f for f in r_path.iterdir() if f.is_file() and f.suffix.lower() == ".mp4"]
@@ -333,16 +398,45 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     if not video_files:
         raise ValueError(f"No video files found in {r_path}")
 
-    num_clips = len(video_files)
-    frames_per_clip = total_frames // num_clips
-    remainder_frames = total_frames % num_clips
-    print(f"[INFO] Distributing {num_clips} video clips across {total_frames} frames...")
+    frame_alloc = _frame_distribution_by_duration(video_files, total_duration, fps)
+    print(f"[INFO] Clip frame distribution: {frame_alloc}")
 
-    video_clipitems_xml = []
+    root = ET.Element("xmeml", version="5")
+    sequence_id = str(uuid.uuid4())
+    sequence = ET.SubElement(root, "sequence", {"id": sequence_id})
+    ET.SubElement(sequence, "name").text = f"{slug}_davinci_timeline"
+    ET.SubElement(sequence, "duration").text = str(total_frames)
+    rate = ET.SubElement(sequence, "rate")
+    ET.SubElement(rate, "timebase").text = str(fps)
+    ET.SubElement(rate, "ntsc").text = "FALSE"
+
+    beats = [float(b.strip()) for b in beats_file.read_text(encoding="utf-8").splitlines() if b.strip()]
+    for idx, beat_sec in enumerate(beats, start=1):
+        marker_frame = int(round(beat_sec * fps))
+        if 0 <= marker_frame < total_frames:
+            marker = ET.SubElement(sequence, "marker")
+            ET.SubElement(marker, "name").text = f"Beat {idx}"
+            ET.SubElement(marker, "comment").text = f"Transient {beat_sec:.3f}s"
+            ET.SubElement(marker, "color").text = "Blue"
+            ET.SubElement(marker, "in").text = str(marker_frame)
+            ET.SubElement(marker, "out").text = "-1"
+
+    media = ET.SubElement(sequence, "media")
+    video_media = ET.SubElement(media, "video")
+    format_el = ET.SubElement(video_media, "format")
+    sample_chars = ET.SubElement(format_el, "samplecharacteristics")
+    ET.SubElement(sample_chars, "width").text = "1920"
+    ET.SubElement(sample_chars, "height").text = "1080"
+    ET.SubElement(sample_chars, "pixelaspectratio").text = "square"
+    rate_el = ET.SubElement(sample_chars, "rate")
+    ET.SubElement(rate_el, "timebase").text = str(fps)
+    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+
+    track = ET.SubElement(video_media, "track")
     current_frame = 0
 
     for idx, v_file in enumerate(video_files):
-        clip_dur = frames_per_clip + (1 if idx < remainder_frames else 0)
+        clip_dur = frame_alloc[idx]
         start_frame = current_frame
         end_frame = current_frame + clip_dur
         current_frame = end_frame
@@ -358,137 +452,63 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
             norm_path = "/" + norm_path
         file_url = f"file://localhost{urllib.parse.quote(norm_path)}"
 
-        reel_name = v_file.stem
-        clip_item = f"""
-							<clipitem id="clipitem-video-{idx+1}">
-								<name>{escape(v_file.name)}</name>
-								<duration>{clip_dur}</duration>
-								<rate>
-									<timebase>{fps}</timebase>
-									<ntsc>FALSE</ntsc>
-								</rate>
-								<in>0</in>
-								<out>{clip_dur}</out>
-								<start>{start_frame}</start>
-								<end>{end_frame}</end>
-								<reel>
-									<name>{escape(reel_name)}</name>
-								</reel>
-								<file id="file-video-{idx+1}">
-									<name>{escape(v_file.name)}</name>
-									<pathurl>{file_url}</pathurl>
-									<rate>
-										<timebase>{fps}</timebase>
-										<ntsc>FALSE</ntsc>
-									</rate>
-									<duration>{clip_dur}</duration>
-									<media>
-										<video>
-											<samplecharacteristics>
-												<width>1920</width>
-												<height>1080</height>
-											</samplecharacteristics>
-										</video>
-									</media>
-								</file>
-							</clipitem>"""
-        video_clipitems_xml.append(clip_item)
+        clip_item = ET.SubElement(track, "clipitem", {"id": f"clipitem-video-{idx + 1}"})
+        ET.SubElement(clip_item, "name").text = v_file.name
+        ET.SubElement(clip_item, "duration").text = str(clip_dur)
+        rate_el = ET.SubElement(clip_item, "rate")
+        ET.SubElement(rate_el, "timebase").text = str(fps)
+        ET.SubElement(rate_el, "ntsc").text = "FALSE"
+        ET.SubElement(clip_item, "in").text = "0"
+        ET.SubElement(clip_item, "out").text = str(clip_dur)
+        ET.SubElement(clip_item, "start").text = str(start_frame)
+        ET.SubElement(clip_item, "end").text = str(end_frame)
 
-    norm_audio = str(audio_wav.resolve()).replace("\\", "/")
-    if not norm_audio.startswith("/"):
-        norm_audio = "/" + norm_audio
-    audio_url = f"file://localhost{urllib.parse.quote(norm_audio)}"
+        reel = ET.SubElement(clip_item, "reel")
+        ET.SubElement(reel, "name").text = v_file.stem
 
-    sequence_id = str(uuid.uuid4())
-    audio_clipitem_xml = f"""
-							<clipitem id="clipitem-audio-1">
-								<name>{escape(slug)}_master_audio.wav</name>
-								<duration>{total_frames}</duration>
-								<rate>
-									<timebase>{fps}</timebase>
-									<ntsc>FALSE</ntsc>
-								</rate>
-								<in>0</in>
-								<out>{total_frames}</out>
-								<start>0</start>
-								<end>{total_frames}</end>
-								<file id="file-audio-1">
-									<name>{escape(slug)}_master_audio.wav</name>
-									<pathurl>{audio_url}</pathurl>
-									<rate>
-										<timebase>{fps}</timebase>
-										<ntsc>FALSE</ntsc>
-									</rate>
-									<duration>{total_frames}</duration>
-									<media>
-										<audio>
-											<samplecharacteristics>
-												<depth>24</depth>
-												<samplerate>{audio_samplerate}</samplerate>
-												<channelcount>{audio_channels}</channelcount>
-											</samplecharacteristics>
-										</audio>
-									</media>
-								</file>
-							</clipitem>"""
+        file_node = ET.SubElement(clip_item, "file", {"id": f"file-video-{idx + 1}"})
+        ET.SubElement(file_node, "name").text = v_file.name
+        ET.SubElement(file_node, "pathurl").text = file_url
+        rate_el = ET.SubElement(file_node, "rate")
+        ET.SubElement(rate_el, "timebase").text = str(fps)
+        ET.SubElement(rate_el, "ntsc").text = "FALSE"
+        ET.SubElement(file_node, "duration").text = str(clip_dur)
+        media_node = ET.SubElement(file_node, "media")
+        video_node = ET.SubElement(media_node, "video")
+        sample_chars = ET.SubElement(video_node, "samplecharacteristics")
+        ET.SubElement(sample_chars, "width").text = str(probe_media(v_file).get("width", 1920))
+        ET.SubElement(sample_chars, "height").text = str(probe_media(v_file).get("height", 1080))
 
-    beats = [float(b.strip()) for b in beats_file.read_text(encoding="utf-8").splitlines() if b.strip()]
-    markers_xml = []
-    marker_count = 0
+    audio_track = ET.SubElement(media, "audio")
+    audio_track_node = ET.SubElement(audio_track, "track")
+    audio_clip_item = ET.SubElement(audio_track_node, "clipitem", {"id": "clipitem-audio-1"})
+    ET.SubElement(audio_clip_item, "name").text = f"{slug}_master_audio.wav"
+    ET.SubElement(audio_clip_item, "duration").text = str(total_frames)
+    rate_el = ET.SubElement(audio_clip_item, "rate")
+    ET.SubElement(rate_el, "timebase").text = str(fps)
+    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+    ET.SubElement(audio_clip_item, "in").text = "0"
+    ET.SubElement(audio_clip_item, "out").text = str(total_frames)
+    ET.SubElement(audio_clip_item, "start").text = "0"
+    ET.SubElement(audio_clip_item, "end").text = str(total_frames)
 
-    for idx, beat_sec in enumerate(beats, start=1):
-        marker_frame = int(round(beat_sec * fps))
-        if 0 <= marker_frame < total_frames:
-            m_xml = f"""
-				<marker>
-					<name>Beat {idx}</name>
-					<comment>Transient {beat_sec:.3f}s</comment>
-					<color>Blue</color>
-					<in>{marker_frame}</in>
-					<out>-1</out>
-				</marker>"""
-            markers_xml.append(m_xml)
-            marker_count += 1
+    audio_file_node = ET.SubElement(audio_clip_item, "file", {"id": "file-audio-1"})
+    ET.SubElement(audio_file_node, "name").text = f"{slug}_master_audio.wav"
+    ET.SubElement(audio_file_node, "pathurl").text = audio_url = f"file://localhost{urllib.parse.quote(str(audio_wav.resolve()).replace('\\', '/'))}"
+    rate_el = ET.SubElement(audio_file_node, "rate")
+    ET.SubElement(rate_el, "timebase").text = str(fps)
+    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+    ET.SubElement(audio_file_node, "duration").text = str(total_frames)
+    audio_media = ET.SubElement(audio_file_node, "media")
+    audio_container = ET.SubElement(audio_media, "audio")
+    sample_chars = ET.SubElement(audio_container, "samplecharacteristics")
+    ET.SubElement(sample_chars, "depth").text = "24"
+    ET.SubElement(sample_chars, "samplerate").text = str(sample_rate)
+    ET.SubElement(sample_chars, "channelcount").text = str(channel_count)
 
-    print(f"[INFO] Encoded {marker_count} transient markers inside 0 <= frame < {total_frames}.")
-
-    xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE xmeml>
-<xmeml version="5">
-	<sequence id="{sequence_id}">
-		<name>{escape(slug)}_davinci_timeline</name>
-		<duration>{total_frames}</duration>
-		<rate>
-			<timebase>{fps}</timebase>
-			<ntsc>FALSE</ntsc>
-		</rate>
-		{"".join(markers_xml)}
-		<media>
-			<video>
-				<format>
-					<samplecharacteristics>
-						<width>1920</width>
-						<height>1080</height>
-						<pixelaspectratio>square</pixelaspectratio>
-						<rate>
-							<timebase>{fps}</timebase>
-							<ntsc>FALSE</ntsc>
-						</rate>
-					</samplecharacteristics>
-				</format>
-				<track>
-					{"".join(video_clipitems_xml)}
-				</track>
-			</video>
-			<audio>
-				<track>
-					{audio_clipitem_xml}
-				</track>
-			</audio>
-		</media>
-	</sequence>
-</xmeml>
-"""
+    xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    xml_content = xml_bytes.decode("utf-8")
+    ET.fromstring(xml_content)
 
     timeline_xml = output_dir / f"{slug}_davinci_timeline.xml"
     timeline_xml.write_text(xml_content, encoding="utf-8")
@@ -610,7 +630,7 @@ class HMSMasterGUI(tk.Tk):
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
-            duration = float(self.duration_var.get().strip())
+            duration = _validate_duration(self.duration_var.get().strip())
 
             if not audio_path:
                 print("[ERROR] Please select a master audio file.")
@@ -647,7 +667,7 @@ class HMSMasterGUI(tk.Tk):
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
-            duration = float(self.duration_var.get().strip())
+            duration = _validate_duration(self.duration_var.get().strip())
 
             if step_idx == 0:
                 run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
