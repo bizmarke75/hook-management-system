@@ -22,7 +22,8 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from hms_metadata import probe_media
-from hms_safety import RollbackStore, is_dry_run
+from hms_manifest import ManifestStore
+from hms_safety import RollbackStore, is_dry_run, set_dry_run
 from hms_v31_patcher import build_argument_parser, dispatch_cli
 
 import librosa
@@ -893,18 +894,6 @@ class HMSMasterGUI(tk.Tk):
         self.run_all_btn = tk.Button(ctrl_frame, text="RUN COMPLETE PIPELINE (Steps 0 -> 4)", bg=self.accent_color, fg="white", font=("Consolas", 11, "bold"), command=self._start_complete_pipeline)
         self.run_all_btn.pack(fill="x", padx=8, pady=6)
 
-        self.dry_var = tk.BooleanVar(value=dry_run)
-        tk.Checkbutton(
-            ctrl_frame,
-            text="DRY RUN (plan only; do not change files)",
-            variable=self.dry_var,
-            bg=self.bg_color,
-            fg=self.fg_color,
-            selectcolor=self.panel_color,
-            activebackground=self.bg_color,
-            activeforeground=self.fg_color,
-        ).pack(anchor="w", padx=10, pady=(0, 4))
-
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -914,11 +903,51 @@ class HMSMasterGUI(tk.Tk):
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 4 (FCP7 XML)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(4)).pack(side="left", expand=True, fill="x", padx=2)
 
-        recovery_row = tk.Frame(ctrl_frame, bg=self.bg_color)
-        recovery_row.pack(fill="x", padx=8, pady=(0, 6))
-        tk.Button(recovery_row, text="VERIFY ONLY", bg=self.btn_bg, fg=self.fg_color, command=self._verify_only_async).pack(side="left", expand=True, fill="x", padx=2)
-        tk.Button(recovery_row, text="ROLLBACK LAST RUN", bg=self.btn_bg, fg=self.fg_color, command=self._rollback_last_run).pack(side="left", expand=True, fill="x", padx=2)
-        tk.Button(recovery_row, text="RESTORE RUN...", bg=self.btn_bg, fg=self.fg_color, command=self._restore_dialog).pack(side="left", expand=True, fill="x", padx=2)
+        safety_row = tk.Frame(ctrl_frame, bg=self.bg_color)
+        safety_row.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.dry_run_var = tk.BooleanVar(value=dry_run)
+        tk.Checkbutton(
+            safety_row,
+            text="DRY RUN",
+            variable=self.dry_run_var,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            selectcolor=self.panel_color,
+            activebackground=self.bg_color,
+            activeforeground=self.fg_color,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="LIST RUNS",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=self._list_runs_gui,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="ROLLBACK LAST RUN",
+            bg="#9c2b2e",
+            fg="white",
+            command=self._rollback_last_run_gui,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="RESTORE RUN",
+            bg="#715500",
+            fg="white",
+            command=self._restore_run_gui,
+        ).pack(side="left", padx=4)
+
+        verify_row = tk.Frame(ctrl_frame, bg=self.bg_color)
+        verify_row.pack(fill="x", padx=8, pady=(0, 6))
+        tk.Button(
+            verify_row,
+            text="VERIFY ONLY",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=self._verify_only_async,
+        ).pack(side="left", expand=True, fill="x", padx=2)
 
         console_frame = tk.LabelFrame(self, text=" Diagnostic Stream (SafeLogRedirector) ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         console_frame.pack(fill="both", expand=True, padx=15, pady=(6, 12))
@@ -942,9 +971,15 @@ class HMSMasterGUI(tk.Tk):
 
     def _start_complete_pipeline(self):
         self.run_all_btn.config(state="disabled")
-        threading.Thread(target=self._execute_pipeline_worker, daemon=True).start()
+        dry_run = self.dry_run_var.get()
+        threading.Thread(
+            target=self._execute_pipeline_worker,
+            args=(dry_run,),
+            daemon=True,
+        ).start()
 
-    def _execute_pipeline_worker(self):
+    def _execute_pipeline_worker(self, dry_run: bool = False):
+        set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
@@ -962,7 +997,7 @@ class HMSMasterGUI(tk.Tk):
                 slug,
                 bpm,
                 duration,
-                dry_run=self.dry_var.get(),
+                dry_run=dry_run,
             )
             if xml_path:
                 print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
@@ -974,17 +1009,21 @@ class HMSMasterGUI(tk.Tk):
             self.run_all_btn.after(0, lambda: self.run_all_btn.config(state="normal"))
 
     def _run_step_async(self, step_idx):
-        threading.Thread(target=self._step_worker, args=(step_idx,), daemon=True).start()
+        dry_run = self.dry_run_var.get()
+        threading.Thread(
+            target=self._step_worker,
+            args=(step_idx, dry_run),
+            daemon=True,
+        ).start()
 
-    def _step_worker(self, step_idx):
+    def _step_worker(self, step_idx, dry_run: bool = False):
+        set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = _validate_duration(self.duration_var.get().strip())
-            dry_run = self.dry_var.get()
-
             if step_idx == 0:
                 run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run)
             elif step_idx == 1:
@@ -1013,13 +1052,34 @@ class HMSMasterGUI(tk.Tk):
             print(f"[ERROR] Verify-only failed: {error}")
             print(traceback.format_exc())
 
-    def _rollback_last_run(self):
+    def _list_runs_gui(self):
+        try:
+            runs = ManifestStore().list_runs()
+            if not runs:
+                messagebox.showinfo("HMS", "No snapshots found.", parent=self)
+                return
+            report = [
+                f"{run['run_id']}  |  {run.get('slug', '')}  |  "
+                f"{run.get('timestamp', '')}  |  {run.get('status', '')}"
+                for run in runs
+            ]
+            messagebox.showinfo(
+                "Snapshot History", "\n".join(report), parent=self
+            )
+        except Exception as error:
+            messagebox.showerror("Error", str(error), parent=self)
+
+    def _rollback_last_run_gui(self):
         if not messagebox.askyesno("Rollback last run", "Restore the most recent completed or failed run?"):
             return
         threading.Thread(target=self._recovery_worker, args=(None,), daemon=True).start()
 
-    def _restore_dialog(self):
-        run_id = simpledialog.askstring("Restore run", "Enter a run ID (for example, run_003):", parent=self)
+    def _restore_run_gui(self):
+        run_id = simpledialog.askstring(
+            "Restore run",
+            "Enter a run ID (for example, run_003):",
+            parent=self,
+        )
         if not run_id:
             return
         if not messagebox.askyesno("Restore run", f"Restore {run_id} and undo its renames and outputs?"):
