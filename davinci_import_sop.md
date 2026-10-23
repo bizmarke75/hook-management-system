@@ -1,5 +1,5 @@
 # Hook Management System (HMS) — DaVinci Resolve Import SOP
-**System Version:** `v2.5.0`  
+**System Version:** `v3.09`
 **Target NLE:** DaVinci Resolve Free / Studio (v18, v19, v20)  
 **Schema Standard:** Final Cut Pro 7 XML (`xmeml v5`)  
 
@@ -15,19 +15,12 @@ This Standard Operating Procedure (SOP) eliminates common XML parsing bugs—suc
 
 ## 2. Pre-Import Checklist
 
-Before launching DaVinci Resolve, verify that the automated Python pipeline (`hms_master_gui.py` or `run_hms_track_pipeline.py`) has executed successfully and generated the required track assets:
+Before launching DaVinci Resolve, verify that the automated `hms_master_gui.py` pipeline has generated the required assets:
 
-- [ ] **Sequential Shot Renders:** Located in `C:\renders\<track_slug>\` named sequentially:
-  - `shot1.mp4`
-  - `shot2.mp4`
-  - `shot3.mp4`
-  - `shot4.mp4`
-  - `shot5.mp4`
-- [ ] **Pre-Trimmed Master Audio:** Located at `C:\audio\<track_slug>_master_trimmed.wav` (where time `00:00.000` corresponds to the exact start of the hook).
-- [ ] **Track-Aware Transient Files:** Located in `C:\renders\output\`:
-  - `<track_slug>_thebeats.txt`
-  - `<track_slug>_hooktimestamp.txt`
-- [ ] **FCP 7 Timeline XML:** Located at `C:\renders\<track_slug>\<track_slug>_hook_timeline.xml`.
+- [ ] **Sequential Shot Renders:** `shot1.mp4` through `shotN.mp4` in the selected renders directory.
+- [ ] **Trimmed Master Audio:** `output\<track_slug>_master_audio.wav`, beginning at the hook start.
+- [ ] **Transient Files:** `output\<track_slug>_thebeats.txt` and `output\<track_slug>_hooktimestamp.txt`.
+- [ ] **FCP 7 Timeline XML:** `output\<track_slug>_davinci_timeline.xml`.
 
 ---
 
@@ -39,7 +32,7 @@ Before launching DaVinci Resolve, verify that the automated Python pipeline (`hm
 4. Navigate to **Master Settings**:
    - Set **Timeline Frame Rate** to **24 fps** (must match the frame rate specified in `hms_master_gui.py`).
    - Set **Playback Frame Rate** to **24 fps**.
-   - Set **Video Format** to **1080p 24** (or **720p 24**).
+   - Choose the desired timeline resolution; the XML carries probed dimensions for each source shot.
 5. Navigate to **Image Scaling**:
    - Set **Input Scaling** to **Scale full frame with crop** (prevents black bars on non-standard AI render aspect ratios).
 6. Click **Save**.
@@ -51,11 +44,10 @@ Before launching DaVinci Resolve, verify that the automated Python pipeline (`hm
 1. Open the **Edit Page** (**Shift + 4**) or **Cut Page** (**Shift + 3**).
 2. Press **Ctrl + Shift + I** (Windows) or **Cmd + Shift + I** (macOS), or navigate to:
    `File > Import > Timeline...`
-3. Navigate to your project render directory:
-   `C:\renders\<track_slug>\<track_slug>_hook_timeline.xml`
+3. Navigate to the pipeline's `output` directory and select `<track_slug>_davinci_timeline.xml`.
 4. Click **Open**.
 5. In the **Load XML** configuration dialog:
-   - **Timeline Name:** Retain default (e.g., `<Track Title> Hook Video [v2.5.0]`).
+   - **Timeline Name:** Retain the generated default.
    - **Automatically import source clips into Media Pool:** Checked `[X]`.
    - **Use sizing information:** Checked `[X]`.
 6. Click **OK**.
@@ -71,8 +63,11 @@ Upon successful import, your timeline will display the following layout:
 | **Video Track V1** | `shot1.mp4` – `shot5.mp4` | Sequentially ordered full-motion video clips (no freeze frames). |
 | **Video Track V2** | *Empty* | Reserved for kinetic Text+ typography overlays. |
 | **Video Track V3** | *Empty* | Reserved for 35mm film grain overlays / adjustment clips. |
-| **Audio Track A1** | `<track_slug>_master_trimmed.wav` | Synchronized audio track starting at frame 0. |
-| **Audio Markers** | Transient Beat Pins | Blue marker pins embedded along Track A1 at every transient hit. |
+| **Audio Track A1** | `<track_slug>_master_audio.wav` | Master audio, synchronized from frame 0. |
+| **Audio Track A2** | Embedded shot audio, when present | Linked and synchronized with its corresponding V1 shot. |
+| **Timeline Markers** | Transient Beat Pins | Blue marker pins embedded at transient positions. |
+
+Each complete pipeline run records a manifest, shot rename map, and backups for overwritten output files under `rollback\run_NNN\`. Use the GUI's rollback/restore controls or run `python hms_v31_patcher.py --rollback` to undo the latest completed or failed run. **DRY RUN** plans work without changing files; **VERIFY ONLY** checks existing outputs.
 
 ---
 
@@ -105,10 +100,11 @@ Upon successful import, your timeline will display the following layout:
 
 | Issue | Root Cause | Solution |
 |---|---|---|
-| **Video imports as still image / freeze frame** | FCPXML 1.9 parent-child spine nesting bug. | Ensure timeline was created using FCP 7 XML (`xmeml v5`) via `hms_master_gui.py` v2.5.0+. |
-| **Audio is missing or out of sync** | Raw audio used without trimming. | Run `trim_master_audio.py` to create a `00:00` aligned WAV file before importing XML. |
-| **Markers missing from timeline** | `thebeats.txt` file missing during script run. | Place `<track_slug>_thebeats.txt` into `C:\renders\output\` and re-generate XML. |
+| **Video imports as still image / freeze frame** | Incorrect or unsupported XML interchange. | Regenerate the timeline using HMS v3.09's FCP 7 XML (`xmeml v5`) output. |
+| **Shot audio is missing or out of sync** | The source shot has no audio stream, or its linked A2 clip was removed. | Check the source in the renders directory and regenerate the XML if needed. |
+| **Master audio is missing or out of sync** | Master WAV path is unavailable or the timeline was altered. | Relink the clip to `output\<track_slug>_master_audio.wav` and verify it starts at frame 0. |
+| **Markers missing from timeline** | `thebeats.txt` file was absent or contained no valid timestamps. | Re-run the pipeline and verify `output\<track_slug>_thebeats.txt` before regenerating XML. |
 | **Timecode drift on long tracks** | Timeline frame rate set to 23.976 fps instead of 24.0 fps. | Verify Project Settings (**Shift + 9**) matches 24 fps before XML import. |
 
 ---
-*Generated by Hook Management System (HMS) Repository Core — v2.5.0*
+*Generated by Hook Management System (HMS) Repository Core — v3.09*
