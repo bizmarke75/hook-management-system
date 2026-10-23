@@ -1,14 +1,14 @@
 # ==============================================================================
 # Script: publish_release.ps1
-# Version: 3.09
+# Version: 3.1
 # Description: Automates git staging, commit, version tagging, and push to origin
 #              to trigger the GitHub Actions CI/CD release build.
 # ==============================================================================
 
 [CmdletBinding()]
 param(
-    [string]$Tag = "v3.09",
-    [string]$Message = "Release Hook Management System v3.09",
+    [string]$Tag = "v3.1",
+    [string]$Message = "Release Hook Management System v3.1",
     [switch]$NonInteractive = $false
 )
 
@@ -77,5 +77,5 @@ git push origin $Tag --force
 
 Write-Host "`n======================================================================" -ForegroundColor Green
 Write-Host " [SUCCESS] Release $Tag published successfully!" -ForegroundColor Green
-Write-Host " GitHub Actions build triggered: .github/workflows/build_release.yml" -ForegroundColor Green
+Write-Host " GitHub Actions build triggered: .github/workflows/build.yml" -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green

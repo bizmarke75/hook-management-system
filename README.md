@@ -1,6 +1,6 @@
 # Hook Management System (HMS)
 
-Version: v3.09
+Version: v3.1
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -12,7 +12,8 @@ HMS is a production-oriented Python workflow that helps you:
 - detect the strongest hook window using RMS energy and transient analysis
 - rename and sequence render shots naturally and safely
 - trim the audio to the exact hook section
-- generate a DaVinci Resolve-compatible FCP 7 XML timeline with probed source metadata, linked shot audio, and a separate master-audio lane
+- generate a DaVinci Resolve-compatible FCP 7 XML timeline with probed source metadata, linked shot audio on A2, and master audio on A1
+- preview pipeline work with dry run, verify generated outputs, and recover prior runs from manifests and backups
 - package the app into a Windows desktop executable
 
 This project is designed to keep the repo clean while still supporting a repeatable release pipeline.
@@ -109,6 +110,8 @@ The GitHub Actions workflow in `.github/workflows/build.yml`:
 The workflow and configuration details for importing the timeline into DaVinci Resolve are documented in:
 
 - `docs/DAVINCI_RESOLVE_SOP.md`
+
+The HMS v3.1 XML import has been manually verified in DaVinci Resolve.
 
 ## Changelog
 

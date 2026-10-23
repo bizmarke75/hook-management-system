@@ -1,12 +1,12 @@
 # ==============================================================================
 # Script: update_and_zip_hms.ps1
-# Version: 3.09
-# Description: Packages Hook Management System v3.09 repository into a release ZIP.
+# Version: 3.1
+# Description: Packages Hook Management System v3.1 repository into a release ZIP.
 # ==============================================================================
 
 [CmdletBinding()]
 param(
-    [string]$Version = "3.09",
+    [string]$Version = "3.1",
     [string]$OutputDir = "release_payload"
 )
 

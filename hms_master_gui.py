@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.09
+337 West Productions - Hook Management System (HMS) v3.1
 Module: hms_master_gui.py
 Architecture: Tkinter Dark UI | SoundFile 24-bit Trimmer | Librosa Beat Tracker
 Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
@@ -827,7 +827,7 @@ class HMSMasterGUI(tk.Tk):
     def __init__(self, dry_run: bool = False):
         super().__init__()
         self.initial_dry_run = dry_run
-        self.title("Hook Management System (HMS) v3.09 - 337 West Productions")
+        self.title("Hook Management System (HMS) v3.1 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
 
@@ -845,7 +845,7 @@ class HMSMasterGUI(tk.Tk):
             sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
             sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
-        print("[INFO] Hook Management System (HMS) v3.09 initialized.")
+        print("[INFO] Hook Management System (HMS) v3.1 initialized.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
 
     def _setup_styles(self):
@@ -856,7 +856,7 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        header = ttk.Label(self, text="HMS v3.09 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
+        header = ttk.Label(self, text="HMS v3.1 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
