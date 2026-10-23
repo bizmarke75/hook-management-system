@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.0.0
+337 West Productions - Hook Management System (HMS) v3.09
 Module: verify_timeline_xml.py
 Purpose: Headless audit tool for DaVinci Resolve Free FCP 7 XML (xmeml v5) timelines.
 Standard: modular-python-builder
@@ -44,7 +44,16 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
     print(f"[INFO] Timebase confirmed: {fps} fps.")
 
     # 2. Video Track & Gapless Continuity Check
-    video_clips = root.findall(".//media/video/track/clipitem")
+    video_tracks = root.findall("./sequence/media/video/track")
+    audio_tracks = root.findall("./sequence/media/audio/track")
+    if len(video_tracks) != 1 or len(audio_tracks) not in (1, 2):
+        print(
+            "[ERROR] Expected one video lane, a master audio lane, and at most one shot-audio lane; "
+            f"found {len(video_tracks)} video lane(s) and {len(audio_tracks)} audio lane(s)."
+        )
+        return False
+
+    video_clips = video_tracks[0].findall("clipitem")
     if not video_clips:
         print("[ERROR] No video <clipitem> elements found in timeline.")
         return False
@@ -74,8 +83,21 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
             print(f"[ERROR] Invalid clip duration for '{name}': {clip_duration} frames.")
             return False
 
-        # Verify underlying media file path
-        pathurl = clip.findtext(".//file/pathurl")
+        file_node = clip.find("file")
+        video_characteristics = clip.find("./file/media/video/samplecharacteristics")
+        try:
+            width = int(video_characteristics.findtext("width", "0")) if video_characteristics is not None else 0
+            height = int(video_characteristics.findtext("height", "0")) if video_characteristics is not None else 0
+        except ValueError:
+            width = height = 0
+        if width <= 0 or height <= 0:
+            print(f"[ERROR] Missing real video dimensions in media metadata for '{name}'.")
+            return False
+        if clip.find("./file/media/video/samplecharacteristics/rate/timebase") is None:
+            print(f"[ERROR] Missing source frame rate metadata for '{name}'.")
+            return False
+
+        pathurl = file_node.findtext("pathurl") if file_node is not None else None
         if pathurl:
             parsed = urllib.parse.urlparse(pathurl)
             file_disk_path = urllib.parse.unquote(parsed.path)
@@ -92,12 +114,15 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
     print(f"[INFO] Video continuity verified: 0 to 960 frames (gapless).")
 
     # 3. Audio Track Validation
-    audio_clips = root.findall(".//media/audio/track/clipitem")
-    if not audio_clips:
-        print("[ERROR] No audio <clipitem> elements found in timeline.")
+    master_audio_clips = audio_tracks[0].findall("clipitem")
+    if len(master_audio_clips) != 1:
+        print(f"[ERROR] Expected one master audio clip on A1, found {len(master_audio_clips)}.")
         return False
 
-    audio_clip = audio_clips[0]
+    audio_clip = master_audio_clips[0]
+    if not audio_clip.findtext("name", "").endswith("_master_audio.wav"):
+        print("[ERROR] The first audio lane must contain the master audio WAV.")
+        return False
     raw_dur = audio_clip.findtext("duration", "-1").strip()
 
     # Guard against un-interpolated template placeholders
@@ -116,7 +141,7 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
         return False
     print(f"[INFO] Audio track duration confirmed: {a_dur} frames (40.000s @ 24fps).")
 
-    # Verify audio file reference
+    # Verify media paths and linked source audio on the second audio lane.
     audio_url = audio_clip.findtext(".//file/pathurl")
     if audio_url:
         parsed_audio = urllib.parse.urlparse(audio_url)
@@ -128,6 +153,72 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
             print(f"[INFO] Master audio located: {Path(audio_disk_path).name} ({file_size_mb:.2f} MB)")
         else:
             print(f"[WARN] Master audio file referenced but not present at: {audio_disk_path}")
+
+    shot_audio_by_id = {}
+    if len(audio_tracks) == 2:
+        shot_audio_items = audio_tracks[1].findall("clipitem")
+        shot_audio_by_id = {item.get("id"): item for item in shot_audio_items}
+        if len(shot_audio_by_id) != len(shot_audio_items):
+            print("[ERROR] Duplicate clip IDs found on the shot-audio lane.")
+            return False
+
+    for video_clip in video_clips:
+        video_id = video_clip.get("id")
+        video_links = {
+            link.findtext("linkclipref")
+            for link in video_clip.findall("link")
+        }
+        if video_id not in video_links:
+            print(f"[ERROR] Video clip '{video_id}' is missing its self-link.")
+            return False
+
+        audio_link_ids = {
+            link.findtext("linkclipref")
+            for link in video_clip.findall("link")
+            if link.findtext("mediatype") == "audio"
+        }
+        source_has_audio = video_clip.find("./file/media/audio") is not None
+        if source_has_audio != bool(audio_link_ids):
+            print(f"[ERROR] Embedded audio stream/link mismatch for video clip '{video_id}'.")
+            return False
+        if len(audio_link_ids) > 1:
+            print(f"[ERROR] Video clip '{video_id}' has multiple linked source-audio clips.")
+            return False
+        for audio_id in audio_link_ids:
+            shot_audio = shot_audio_by_id.get(audio_id)
+            if shot_audio is None:
+                print(f"[ERROR] Video clip '{video_id}' links to missing shot-audio clip '{audio_id}'.")
+                return False
+            reciprocal_links = {
+                link.findtext("linkclipref")
+                for link in shot_audio.findall("link")
+            }
+            if video_id not in reciprocal_links or audio_id not in reciprocal_links:
+                print(f"[ERROR] Video/audio link pair '{video_id}' and '{audio_id}' is incomplete.")
+                return False
+            video_file = video_clip.find("file")
+            audio_file = shot_audio.find("file")
+            if (
+                video_file is None
+                or audio_file is None
+                or video_file.get("id") != audio_file.get("id")
+            ):
+                print(f"[ERROR] Video/audio pair '{video_id}' and '{audio_id}' does not share its source file.")
+                return False
+            if shot_audio.findtext("start") != video_clip.findtext("start"):
+                print(f"[ERROR] Video/audio pair '{video_id}' and '{audio_id}' are not timeline-synchronized.")
+                return False
+
+    for audio_id, shot_audio in shot_audio_by_id.items():
+        if not any(
+            link.findtext("linkclipref") == audio_id
+            for clip in video_clips
+            for link in clip.findall("link")
+        ):
+            print(f"[ERROR] Shot-audio clip '{audio_id}' has no linked video clip.")
+            return False
+    if shot_audio_by_id:
+        print(f"[INFO] Verified {len(shot_audio_by_id)} linked source-audio clip(s) on A2.")
 
     # 4. Marker Integrity Check
     markers = root.findall(".//marker")

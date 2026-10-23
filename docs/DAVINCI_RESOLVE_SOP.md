@@ -1,10 +1,10 @@
 # 337 West Productions — DaVinci Resolve Free Standard Operating Procedure (SOP)
 
 **Document ID:** SOP-HMS-001
-**Project:** Hook Management System (HMS) v3.1.0
+**Project:** Hook Management System (HMS) v3.09
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
-**Timeline Standard:** 1080p (1920×1080) | 24.0 fps | 40.000s (960 frames exact)
+**Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
 
 ---
 
@@ -28,7 +28,7 @@ Before opening DaVinci Resolve, verify that the HMS pipeline has generated the r
 3. Name the project: `HMS_<SLUG>_MASTER`.
 4. Press `Shift + 9` to open Project Settings.
 5. Under Master Settings > Timeline Format:
-   - Timeline resolution: `1920 x 1080 Processing`
+   - Timeline resolution: Match the desired output; the XML includes probed source dimensions for each shot
    - Pixel aspect ratio: `Square`
    - Timeline frame rate: `24`
    - Playback frame rate: `24`
@@ -55,7 +55,7 @@ When the Load XML dialog appears, use these settings:
 | Automatically set project settings | Unchecked | Avoids overriding the 24 fps lock |
 | Automatically import source clips into media pool | Checked | Pulls clips from the renders folder |
 | Ignore file extensions when matching | Unchecked | Keeps exact `.mp4` and `.wav` linking |
-| Use sizing information | Checked | Maintains 1080p framing |
+| Use sizing information | Checked | Preserves sizing metadata from probed source media |
 | Link to source camera files | Unchecked | HMS targets local render assets |
 
 Click OK to proceed.
@@ -68,6 +68,7 @@ Run through this checklist on the Edit page:
 
 - [ ] Timeline ruler ends at exactly `00:00:40:00` (960 frames)
 - [ ] Audio track begins at frame 0 and matches the trimmed master audio file
+- [ ] Master audio is on A1; embedded render audio, when present, is linked to its video clip on A2
 - [ ] Video shots appear in order from `shot1` to `shotN` with no black filler gaps
 - [ ] Blue marker pins span the full hook window and align to transient peaks
 - [ ] Sequence name and revision metadata are present in the XML root and clip metadata
@@ -103,7 +104,7 @@ When editing and color finishing are complete:
 
 ## 8. Runtime expectations
 
-The current HMS v3.1.0 workflow expects:
+The current HMS v3.09 workflow expects:
 
 - a valid master audio source
 - a render directory with sequential clips

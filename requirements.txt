@@ -1,4 +1,4 @@
-# 337 West Productions - Hook Management System (HMS) v3.0.0
+# 337 West Productions - Hook Management System (HMS) v3.09
 # Core Audio DSP & Transient Detection Engine
 soundfile>=0.12.1
 librosa>=0.10.1

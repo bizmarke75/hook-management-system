@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.0.0
+337 West Productions - Hook Management System (HMS) v3.09
 Module: hms_master_gui.py
 Architecture: Tkinter Dark UI | SoundFile 24-bit Trimmer | Librosa Beat Tracker
 Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
@@ -18,6 +18,7 @@ import time
 import traceback
 import urllib.parse
 import uuid
+from fractions import Fraction
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -26,11 +27,6 @@ import numpy as np
 import soundfile as sf
 import tkinter as tk
 from tkinter import filedialog, scrolledtext, ttk
-
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
 
 MAX_ANALYSIS_FILE_MB = 512
 
@@ -80,6 +76,7 @@ def probe_media(path: Path) -> dict:
         "-print_format",
         "json",
         "-show_streams",
+        "-show_format",
         str(path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -106,33 +103,101 @@ def probe_media(path: Path) -> dict:
         duration = as_float(video.get("duration"), 0.0)
     if duration <= 0 and audio:
         duration = as_float(audio.get("duration"), 0.0)
+    video_fps = None
+    width = as_int(video.get("width"), 0) if video else 0
+    height = as_int(video.get("height"), 0) if video else 0
+    if video:
+        if width <= 0 or height <= 0:
+            raise ValueError(f"ffprobe did not report valid video dimensions for {path}.")
+        for candidate in (video.get("avg_frame_rate"), video.get("r_frame_rate")):
+            if not candidate:
+                continue
+            try:
+                if Fraction(str(candidate)) > 0:
+                    video_fps = str(candidate)
+                    break
+            except (ValueError, ZeroDivisionError):
+                continue
+        if video_fps is None:
+            raise ValueError(f"ffprobe did not report a valid video frame rate for {path}.")
 
     return {
-        "width": as_int(video.get("width"), 1920) if video else 1920,
-        "height": as_int(video.get("height"), 1080) if video else 1080,
-        "fps": video.get("r_frame_rate", "24/1") if video else "24/1",
+        "width": width,
+        "height": height,
+        "fps": video_fps,
+        "has_video": video is not None,
+        "has_audio": audio is not None,
         "samplerate": as_int(audio.get("sample_rate"), 44100) if audio else 44100,
         "channels": as_int(audio.get("channels"), 2) if audio else 2,
+        "depth": as_int(
+            (audio or {}).get("bits_per_raw_sample") or (audio or {}).get("bits_per_sample"),
+            24,
+        ),
         "duration": duration if duration > 0 else 0.0,
+        "audio_duration": (
+            as_float(audio.get("duration"), duration) if audio else 0.0
+        ),
     }
 
 
-def _verify_video_dimensions(v_file: Path) -> tuple[int, int] | None:
-    if Image is None:
-        return None
-
+def _fcpxml_rate(fps_value: str | int | float) -> tuple[int, str, float]:
+    """Convert ffprobe's rational frame rate to FCP XML timebase and NTSC flag."""
     try:
-        with Image.open(v_file) as img:
-            return img.size
-    except Exception:
-        return None
+        rate = Fraction(str(fps_value))
+        value = float(rate)
+    except (ValueError, ZeroDivisionError) as error:
+        raise ValueError(f"Invalid media frame rate: {fps_value!r}.") from error
+    if value <= 0:
+        raise ValueError(f"Invalid media frame rate: {fps_value!r}.")
+
+    for nominal, ntsc_rate in ((24, 24000 / 1001), (30, 30000 / 1001), (60, 60000 / 1001)):
+        if abs(value - ntsc_rate) < 0.01:
+            return nominal, "TRUE", value
+    return max(1, int(round(value))), "FALSE", value
 
 
-def _frame_distribution_by_duration(video_files: list[Path], total_duration: float, fps: int) -> list[int]:
-    tracked = []
-    for v_file in video_files:
-        meta = probe_media(v_file)
-        tracked.append(max(meta.get("duration", total_duration / max(len(video_files), 1)), 0.01))
+def _append_rate(parent: ET.Element, fps: int, ntsc: str = "FALSE") -> None:
+    rate = ET.SubElement(parent, "rate")
+    ET.SubElement(rate, "timebase").text = str(fps)
+    ET.SubElement(rate, "ntsc").text = ntsc
+
+
+def _append_clip_link(
+    clip_item: ET.Element,
+    clip_ref: str,
+    media_type: str,
+    track_index: int,
+    clip_index: int,
+) -> None:
+    link = ET.SubElement(clip_item, "link")
+    ET.SubElement(link, "linkclipref").text = clip_ref
+    ET.SubElement(link, "mediatype").text = media_type
+    ET.SubElement(link, "trackindex").text = str(track_index)
+    ET.SubElement(link, "clipindex").text = str(clip_index)
+
+
+def _file_path_url(path: Path) -> str:
+    normalized_path = str(path.resolve()).replace("\\", "/")
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    return f"file://localhost{urllib.parse.quote(normalized_path, safe='/:')}"
+
+
+def _frame_distribution_by_duration(
+    video_files: list[Path],
+    total_duration: float,
+    fps: int,
+    metadata: list[dict] | None = None,
+) -> list[int]:
+    tracked = [
+        max(
+            (metadata[idx] if metadata else probe_media(v_file)).get(
+                "duration", total_duration / max(len(video_files), 1)
+            ),
+            0.01,
+        )
+        for idx, v_file in enumerate(video_files)
+    ]
 
     total_weight = sum(tracked)
     if total_weight <= 0:
@@ -385,8 +450,13 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
         raise FileNotFoundError("Missing master audio or beats file in output/. Run Steps 0-3 first.")
 
     audio_meta = probe_media(audio_wav)
+    if not audio_meta["has_audio"]:
+        raise ValueError(f"ffprobe did not find an audio stream in the master WAV: {audio_wav.name}")
+    if audio_meta["duration"] <= 0:
+        raise ValueError(f"ffprobe did not report the master WAV duration: {audio_wav.name}")
     sample_rate = audio_meta["samplerate"]
     channel_count = audio_meta["channels"]
+    audio_depth = audio_meta["depth"]
 
     total_frames = int(round(total_duration * fps))
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
@@ -398,7 +468,14 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     if not video_files:
         raise ValueError(f"No video files found in {r_path}")
 
-    frame_alloc = _frame_distribution_by_duration(video_files, total_duration, fps)
+    video_metadata = [probe_media(video_file) for video_file in video_files]
+    for video_file, metadata in zip(video_files, video_metadata):
+        if not metadata["has_video"]:
+            raise ValueError(f"Render does not contain a video stream: {video_file.name}")
+        if metadata["duration"] <= 0:
+            raise ValueError(f"ffprobe did not report the video duration: {video_file.name}")
+
+    frame_alloc = _frame_distribution_by_duration(video_files, total_duration, fps, video_metadata)
     print(f"[INFO] Clip frame distribution: {frame_alloc}")
 
     root = ET.Element("xmeml", version="5")
@@ -406,9 +483,12 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     sequence = ET.SubElement(root, "sequence", {"id": sequence_id})
     ET.SubElement(sequence, "name").text = f"{slug}_davinci_timeline"
     ET.SubElement(sequence, "duration").text = str(total_frames)
-    rate = ET.SubElement(sequence, "rate")
-    ET.SubElement(rate, "timebase").text = str(fps)
-    ET.SubElement(rate, "ntsc").text = "FALSE"
+    _append_rate(sequence, fps)
+    timecode = ET.SubElement(sequence, "timecode")
+    _append_rate(timecode, fps)
+    ET.SubElement(timecode, "string").text = "00:00:00:00"
+    ET.SubElement(timecode, "frame").text = "0"
+    ET.SubElement(timecode, "displayformat").text = "NDF"
 
     beats = [float(b.strip()) for b in beats_file.read_text(encoding="utf-8").splitlines() if b.strip()]
     for idx, beat_sec in enumerate(beats, start=1):
@@ -425,86 +505,164 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     video_media = ET.SubElement(media, "video")
     format_el = ET.SubElement(video_media, "format")
     sample_chars = ET.SubElement(format_el, "samplecharacteristics")
-    ET.SubElement(sample_chars, "width").text = "1920"
-    ET.SubElement(sample_chars, "height").text = "1080"
+    sequence_metadata = max(video_metadata, key=lambda item: item["width"] * item["height"])
+    ET.SubElement(sample_chars, "width").text = str(sequence_metadata["width"])
+    ET.SubElement(sample_chars, "height").text = str(sequence_metadata["height"])
     ET.SubElement(sample_chars, "pixelaspectratio").text = "square"
-    rate_el = ET.SubElement(sample_chars, "rate")
-    ET.SubElement(rate_el, "timebase").text = str(fps)
-    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+    _append_rate(sample_chars, fps)
 
     track = ET.SubElement(video_media, "track")
+    ET.SubElement(track, "enabled").text = "TRUE"
+    ET.SubElement(track, "locked").text = "FALSE"
     current_frame = 0
+    shot_clips = []
 
-    for idx, v_file in enumerate(video_files):
+    for idx, (v_file, video_meta) in enumerate(zip(video_files, video_metadata)):
         clip_dur = frame_alloc[idx]
         start_frame = current_frame
         end_frame = current_frame + clip_dur
         current_frame = end_frame
 
-        dim = _verify_video_dimensions(v_file)
-        if dim is not None:
-            width, height = dim
-            if (width, height) != (1920, 1080):
-                print(f"[WARN] Video dimensions differ from default Resolve template: {v_file.name} -> {width}x{height}.")
+        source_fps, source_ntsc, actual_source_fps = _fcpxml_rate(video_meta["fps"])
+        source_duration = video_meta["duration"] or clip_dur / fps
+        source_frames = max(1, int(round(source_duration * actual_source_fps)))
+        source_clip_frames = max(1, int(round((clip_dur / fps) * actual_source_fps)))
+        file_url = _file_path_url(v_file)
+        video_clip_id = f"video-{idx + 1}"
+        audio_clip_id = f"audio-{idx + 1}" if video_meta["has_audio"] else None
+        file_id = f"file-shot-{idx + 1}"
 
-        norm_path = str(v_file.resolve()).replace("\\", "/")
-        if not norm_path.startswith("/"):
-            norm_path = "/" + norm_path
-        file_url = f"file://localhost{urllib.parse.quote(norm_path)}"
-
-        clip_item = ET.SubElement(track, "clipitem", {"id": f"clipitem-video-{idx + 1}"})
+        clip_item = ET.SubElement(track, "clipitem", {"id": video_clip_id})
         ET.SubElement(clip_item, "name").text = v_file.name
+        ET.SubElement(clip_item, "enabled").text = "TRUE"
         ET.SubElement(clip_item, "duration").text = str(clip_dur)
-        rate_el = ET.SubElement(clip_item, "rate")
-        ET.SubElement(rate_el, "timebase").text = str(fps)
-        ET.SubElement(rate_el, "ntsc").text = "FALSE"
+        _append_rate(clip_item, fps)
         ET.SubElement(clip_item, "in").text = "0"
-        ET.SubElement(clip_item, "out").text = str(clip_dur)
+        ET.SubElement(clip_item, "out").text = str(source_clip_frames)
         ET.SubElement(clip_item, "start").text = str(start_frame)
         ET.SubElement(clip_item, "end").text = str(end_frame)
 
         reel = ET.SubElement(clip_item, "reel")
         ET.SubElement(reel, "name").text = v_file.stem
 
-        file_node = ET.SubElement(clip_item, "file", {"id": f"file-video-{idx + 1}"})
+        file_node = ET.SubElement(clip_item, "file", {"id": file_id})
         ET.SubElement(file_node, "name").text = v_file.name
         ET.SubElement(file_node, "pathurl").text = file_url
-        rate_el = ET.SubElement(file_node, "rate")
-        ET.SubElement(rate_el, "timebase").text = str(fps)
-        ET.SubElement(rate_el, "ntsc").text = "FALSE"
-        ET.SubElement(file_node, "duration").text = str(clip_dur)
+        _append_rate(file_node, source_fps, source_ntsc)
+        ET.SubElement(file_node, "duration").text = str(source_frames)
         media_node = ET.SubElement(file_node, "media")
         video_node = ET.SubElement(media_node, "video")
         sample_chars = ET.SubElement(video_node, "samplecharacteristics")
-        ET.SubElement(sample_chars, "width").text = str(probe_media(v_file).get("width", 1920))
-        ET.SubElement(sample_chars, "height").text = str(probe_media(v_file).get("height", 1080))
+        ET.SubElement(sample_chars, "width").text = str(video_meta["width"])
+        ET.SubElement(sample_chars, "height").text = str(video_meta["height"])
+        _append_rate(sample_chars, source_fps, source_ntsc)
+        if video_meta["has_audio"]:
+            source_audio_node = ET.SubElement(media_node, "audio")
+            source_sample_chars = ET.SubElement(source_audio_node, "samplecharacteristics")
+            ET.SubElement(source_sample_chars, "depth").text = str(video_meta["depth"])
+            ET.SubElement(source_sample_chars, "samplerate").text = str(video_meta["samplerate"])
+            ET.SubElement(source_sample_chars, "channelcount").text = str(video_meta["channels"])
+        source_track = ET.SubElement(clip_item, "sourcetrack")
+        ET.SubElement(source_track, "mediatype").text = "video"
+        ET.SubElement(source_track, "trackindex").text = "1"
+        _append_clip_link(clip_item, video_clip_id, "video", 1, idx + 1)
+        print(
+            f"[INFO] {v_file.name}: {video_meta['width']}x{video_meta['height']} "
+            f"@ {video_meta['fps']} fps; embedded audio: "
+            f"{'yes' if video_meta['has_audio'] else 'no'}."
+        )
+        shot_clips.append(
+            {
+                "video_id": video_clip_id,
+                "audio_id": audio_clip_id,
+                "file_id": file_id,
+                "file_name": v_file.name,
+                "metadata": video_meta,
+                "timeline_start": start_frame,
+                "timeline_duration": clip_dur,
+            }
+        )
 
     audio_track = ET.SubElement(media, "audio")
+    ET.SubElement(audio_track, "numOutputChannels").text = str(channel_count)
+    audio_format = ET.SubElement(audio_track, "format")
+    audio_sample_chars = ET.SubElement(audio_format, "samplecharacteristics")
+    ET.SubElement(audio_sample_chars, "depth").text = str(audio_depth)
+    ET.SubElement(audio_sample_chars, "samplerate").text = str(sample_rate)
+    ET.SubElement(audio_sample_chars, "channelcount").text = str(channel_count)
     audio_track_node = ET.SubElement(audio_track, "track")
-    audio_clip_item = ET.SubElement(audio_track_node, "clipitem", {"id": "clipitem-audio-1"})
+    ET.SubElement(audio_track_node, "enabled").text = "TRUE"
+    ET.SubElement(audio_track_node, "locked").text = "FALSE"
+    ET.SubElement(audio_track_node, "outputchannelindex").text = "1"
+    audio_clip_item = ET.SubElement(audio_track_node, "clipitem", {"id": "master-audio"})
     ET.SubElement(audio_clip_item, "name").text = f"{slug}_master_audio.wav"
+    ET.SubElement(audio_clip_item, "enabled").text = "TRUE"
     ET.SubElement(audio_clip_item, "duration").text = str(total_frames)
-    rate_el = ET.SubElement(audio_clip_item, "rate")
-    ET.SubElement(rate_el, "timebase").text = str(fps)
-    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+    _append_rate(audio_clip_item, fps)
     ET.SubElement(audio_clip_item, "in").text = "0"
     ET.SubElement(audio_clip_item, "out").text = str(total_frames)
     ET.SubElement(audio_clip_item, "start").text = "0"
     ET.SubElement(audio_clip_item, "end").text = str(total_frames)
 
-    audio_file_node = ET.SubElement(audio_clip_item, "file", {"id": "file-audio-1"})
+    audio_file_node = ET.SubElement(audio_clip_item, "file", {"id": "file-master-audio"})
     ET.SubElement(audio_file_node, "name").text = f"{slug}_master_audio.wav"
-    ET.SubElement(audio_file_node, "pathurl").text = audio_url = f"file://localhost{urllib.parse.quote(str(audio_wav.resolve()).replace('\\', '/'))}"
-    rate_el = ET.SubElement(audio_file_node, "rate")
-    ET.SubElement(rate_el, "timebase").text = str(fps)
-    ET.SubElement(rate_el, "ntsc").text = "FALSE"
+    ET.SubElement(audio_file_node, "pathurl").text = _file_path_url(audio_wav)
+    _append_rate(audio_file_node, fps)
     ET.SubElement(audio_file_node, "duration").text = str(total_frames)
     audio_media = ET.SubElement(audio_file_node, "media")
     audio_container = ET.SubElement(audio_media, "audio")
     sample_chars = ET.SubElement(audio_container, "samplecharacteristics")
-    ET.SubElement(sample_chars, "depth").text = "24"
+    ET.SubElement(sample_chars, "depth").text = str(audio_depth)
     ET.SubElement(sample_chars, "samplerate").text = str(sample_rate)
     ET.SubElement(sample_chars, "channelcount").text = str(channel_count)
+    source_track = ET.SubElement(audio_clip_item, "sourcetrack")
+    ET.SubElement(source_track, "mediatype").text = "audio"
+    ET.SubElement(source_track, "trackindex").text = "1"
+
+    shot_audio_clips = [clip for clip in shot_clips if clip["audio_id"]]
+    if shot_audio_clips:
+        shot_audio_track = ET.SubElement(audio_track, "track")
+        ET.SubElement(shot_audio_track, "enabled").text = "TRUE"
+        ET.SubElement(shot_audio_track, "locked").text = "FALSE"
+        ET.SubElement(shot_audio_track, "outputchannelindex").text = "1"
+
+        for audio_index, clip in enumerate(shot_audio_clips, start=1):
+            metadata = clip["metadata"]
+            audio_duration = metadata["audio_duration"] or metadata["duration"]
+            if audio_duration <= 0:
+                raise ValueError(
+                    f"Could not determine embedded audio duration for {clip['file_name']}."
+                )
+            audio_clip_frames = min(
+                clip["timeline_duration"],
+                max(1, int(round(audio_duration * fps))),
+            )
+
+            audio_item = ET.SubElement(
+                shot_audio_track, "clipitem", {"id": clip["audio_id"]}
+            )
+            ET.SubElement(audio_item, "name").text = clip["file_name"]
+            ET.SubElement(audio_item, "enabled").text = "TRUE"
+            ET.SubElement(audio_item, "duration").text = str(audio_clip_frames)
+            _append_rate(audio_item, fps)
+            ET.SubElement(audio_item, "in").text = "0"
+            ET.SubElement(audio_item, "out").text = str(audio_clip_frames)
+            ET.SubElement(audio_item, "start").text = str(clip["timeline_start"])
+            ET.SubElement(audio_item, "end").text = str(
+                clip["timeline_start"] + audio_clip_frames
+            )
+            ET.SubElement(audio_item, "file", {"id": clip["file_id"]})
+            source_track = ET.SubElement(audio_item, "sourcetrack")
+            ET.SubElement(source_track, "mediatype").text = "audio"
+            ET.SubElement(source_track, "trackindex").text = "1"
+
+            video_index = int(clip["video_id"].rsplit("-", 1)[1])
+            _append_clip_link(audio_item, clip["video_id"], "video", 1, video_index)
+            _append_clip_link(audio_item, clip["audio_id"], "audio", 2, audio_index)
+            video_item = track.find(f"clipitem[@id='{clip['video_id']}']")
+            if video_item is None:
+                raise RuntimeError(f"Missing generated video clip item: {clip['video_id']}")
+            _append_clip_link(video_item, clip["audio_id"], "audio", 2, audio_index)
 
     xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     xml_content = xml_bytes.decode("utf-8")
@@ -523,7 +681,7 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 class HMSMasterGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Hook Management System (HMS) v3.0.0 - 337 West Productions")
+        self.title("Hook Management System (HMS) v3.09 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
 
@@ -541,7 +699,7 @@ class HMSMasterGUI(tk.Tk):
             sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
             sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
-        print("[INFO] Hook Management System (HMS) v3.0.0 initialized.")
+        print("[INFO] Hook Management System (HMS) v3.09 initialized.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
 
     def _setup_styles(self):
@@ -552,7 +710,7 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        header = ttk.Label(self, text="HMS v3.0.0 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
+        header = ttk.Label(self, text="HMS v3.09 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))

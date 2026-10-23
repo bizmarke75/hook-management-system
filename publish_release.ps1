@@ -1,14 +1,14 @@
 # ==============================================================================
 # Script: publish_release.ps1
-# Version: 3.0.0
+# Version: 3.09
 # Description: Automates git staging, commit, version tagging, and push to origin
 #              to trigger the GitHub Actions CI/CD release build.
 # ==============================================================================
 
 [CmdletBinding()]
 param(
-    [string]$Tag = "v3.0.0",
-    [string]$Message = "Release Hook Management System v3.0.0",
+    [string]$Tag = "v3.09",
+    [string]$Message = "Release Hook Management System v3.09",
     [switch]$NonInteractive = $false
 )
 

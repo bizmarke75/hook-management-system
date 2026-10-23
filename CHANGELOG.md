@@ -2,16 +2,19 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
-## [v3.1.0] - 2026-10-23
+## [v3.09] - 2026-10-23
 
 ### Added
 - Production hardening pass for the main HMS GUI and pipeline flow.
 - ffprobe-based media probing for real audio and video metadata validation.
 - ET XML generation and safer XML assembly for DaVinci Resolve import.
+- Resolve-oriented FCP 7 XML with source video dimensions and frame rates, per-shot audio detection, and synchronized video/audio clip links.
+- A separate A1 master-audio lane and A2 embedded-shot-audio lane when render clips contain audio.
 - Unique sequence identifiers and stricter metadata handling.
-- Reel metadata and real video dimension warnings for downstream compliance checks.
+- Reel metadata with ffprobe-derived source video dimensions and frame rates.
 - Safe two-phase temp renaming strategy to prevent overwrite risk during shot sequencing.
 - Audio length verification and BPM/duration validation guards.
+- ffprobe-derived shot resolution and frame-rate metadata, with embedded shot audio linked on a separate timeline lane.
 - Optional GUI stdout guard for execution environments that prefer cleaner console behavior.
 
 ### Fixed

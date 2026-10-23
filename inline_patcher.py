@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.0.0
+337 West Productions - Hook Management System (HMS) v3.09
 Module: inline_patcher.py
 Purpose: Hardens PyInstaller hooks for Python 3.14, resolves hook collisions,
          compiles hms_master_gui.exe, and packages the portable release ZIP.
@@ -184,11 +184,11 @@ def audit_distribution(root_dir: Path) -> bool:
         print("[WARN] libsndfile DLL not explicitly matched in dist tree.")
         
     # Generate portable release ZIP
-    zip_dest = root_dir / "dist" / "HMS_v3.0.0_Portable"
+    zip_dest = root_dir / "dist" / "HMS_v3.09_Portable"
     print(f"[RUN] Packaging {dist_dir} into {zip_dest}.zip...")
     try:
         shutil.make_archive(str(zip_dest), 'zip', str(dist_dir))
-        zip_file = root_dir / "dist" / "HMS_v3.0.0_Portable.zip"
+        zip_file = root_dir / "dist" / "HMS_v3.09_Portable.zip"
         size_mb = zip_file.stat().st_size / (1024 * 1024)
         print(f"[SUCCESS] Portable distribution archive ready: {zip_file.name} ({size_mb:.2f} MB)")
     except Exception as e:
@@ -198,7 +198,7 @@ def audit_distribution(root_dir: Path) -> bool:
 
 def main():
     print("=======================================================")
-    print("HMS v3.0.0 INLINE PATCHER & COMPILER")
+    print("HMS v3.09 INLINE PATCHER & COMPILER")
     print("=======================================================")
     root_dir = Path.cwd().resolve()
     spec_path = root_dir / "hms_master_gui.spec"
@@ -224,9 +224,9 @@ def main():
     # 5. Audit & Package Release Archive
     if audit_distribution(root_dir):
         print("\n=======================================================")
-        print("[SUCCESS] HMS v3.0.0 BUILD & PACKAGING COMPLETE")
+        print("[SUCCESS] HMS v3.09 BUILD & PACKAGING COMPLETE")
         print(f"Binary: dist/hms_master_gui/hms_master_gui.exe")
-        print(f"Archive: dist/HMS_v3.0.0_Portable.zip")
+        print(f"Archive: dist/HMS_v3.09_Portable.zip")
         print("=======================================================\n")
     else:
         sys.exit(1)
