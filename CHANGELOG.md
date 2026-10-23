@@ -2,39 +2,79 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v3.1.0] - 2026-10-23
+
+### Added
+- Production hardening pass for the main HMS GUI and pipeline flow.
+- ffprobe-based media probing for real audio and video metadata validation.
+- ET XML generation and safer XML assembly for DaVinci Resolve import.
+- Unique sequence identifiers and stricter metadata handling.
+- Reel metadata and real video dimension warnings for downstream compliance checks.
+- Safe two-phase temp renaming strategy to prevent overwrite risk during shot sequencing.
+- Audio length verification and BPM/duration validation guards.
+- Optional GUI stdout guard for execution environments that prefer cleaner console behavior.
+
+### Fixed
+- Audio short-read validation and clipping issues in the trimmed WAV workflow.
+- XML escaping and metadata mismatches in generated timeline output.
+- Unsafe rename behavior during shot sequencing.
+- Overwrite and collision risk in the render renaming process.
+- Inconsistent source samplerate/channel values in generated FCP XML.
+
+### Changed
+- Consolidated the runtime app around the `hms_master_gui.py` production pipeline.
+- Tightened build validation and packaging expectations for the Windows release flow.
+
+---
+
+## [v3.0.0] - 2026-10-19
+
+### Added
+- Unified Tkinter GUI and dark theme interface.
+- RMS sliding-window hook detector with relative timeline sync.
+- Sub-second 24-bit PCM WAV trimmer bypassing BWF chunk issues.
+- Gapless 24fps FCP 7 XML generator with transient beat pins.
+- Headless timeline validator via `verify_timeline_xml.py`.
+- Automated Windows PyInstaller build and release packaging flow.
+
+### Changed
+- Finalized the v3.0.0 production architecture and documentation set.
+
+---
+
 ## [v2.6.0] - 2026-10-15
 
 ### Added
-- **Interactive Directory Browsing:** Added native Tkinter `filedialog` support with `Browse...` buttons for Video Directory, Metadata Directory, and Master Audio WAV selection in `hms_master_gui.py`.
-- **Executable Builder Engine:** Created `build_exe.bat` and `build_exe.py` scripts to package `hms_master_gui.py` into a single standalone Windows executable (`dist/hms_master_gui.exe`) via PyInstaller.
-- **Dependency Manifest Update:** Added `pyinstaller>=6.0.0` to `requirements.txt`.
+- Interactive directory browsing with native Tkinter file dialogs.
+- Executable builder scripts for packaging the GUI into a standalone Windows binary.
+- PyInstaller dependency manifest updates.
 
 ### Fixed
-- Path handling and validation when selecting custom or non-standard folder locations outside `C:\renders\`.
+- Path validation and selection handling for custom folders outside `C:\renders\`.
 
 ---
 
 ## [v2.5.0] - 2026-10-15
 
 ### Added
-- **Master GUI Control Panel:** Single-window Tkinter desktop application (`hms_master_gui.py`) consolidating shot renaming, audio trimming, beat loading, and XML generation.
-- **Track Isolation Protocol:** Prefixing files with track slugs (`<track_slug>_...`) to prevent metadata overwrites across multi-song production runs.
-- **Sub-Second Audio Trimming:** Automatic wave cutter to prevent DaVinci Resolve audio offset dropouts.
-- **Revision Tagging Auditability:** Embedded `v2.5.0` system revision tags into FCP 7 XML root header, sequence title, and frame 0 markers.
-- **Live Logging System:** Simultaneous console logging and file logging (`C:\renders\hms_workflow.log`).
+- Master GUI control panel for the full workflow.
+- Track isolation protocol and metadata safety rules.
+- Sub-second trimmed audio output.
+- Revision tagging in generated XML outputs.
+- Live logging and runtime diagnostics.
 
 ---
 
-## [v2.0.0] - 2026-10-14
+## [v2.0.0] - 2024-10-14
 
 ### Added
-- **FCP 7 XML (`xmeml v5`) Engine:** Replaced FCPXML 1.9 to bypass DaVinci Resolve MP4 freeze-frame hold bugs.
-- **Track-Aware Transient Engine:** Support for parsing `thebeats.txt` and embedding blue timeline markers onto audio tracks.
-- **Sequential Shot Renamer:** Chronological ordering and renaming of MP4 render clips (`shot1.mp4` through `shot5.mp4`).
+- FCP 7 XML (`xmeml v5`) engine.
+- Track-aware transient engine and beat marker import.
+- Sequential shot renamer for render ordering.
 
 ---
 
 ## [v1.0.0] - 2026-10-10
 
 ### Added
-- Initial proof-of-concept CLI scripts for Suno AI audio blueprinting, Google Flow video generation, and DaVinci Resolve alignment.
+- Initial proof-of-concept CLI workflow for Suno AI audio and DaVinci Resolve alignment.

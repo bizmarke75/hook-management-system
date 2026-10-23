@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -17,54 +19,47 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install Dependencies
+        shell: powershell
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          pip install soundfile librosa numpy scipy pyinstaller
+          pip install -r requirements.txt
 
-      - name: Audit Working Environment
+      - name: Audit Runtime Environment
+        shell: powershell
         run: |
-          python -c "import soundfile, librosa, scipy, numpy, tkinter; print('[SUCCESS] Python audio dependencies loaded cleanly.')"
+          python -c "import soundfile, librosa, scipy, numpy, tkinter; print('[SUCCESS] HMS runtime dependencies loaded cleanly.')"
 
-      - name: Compile Standalone Executable via PyInstaller
+      - name: Build Standalone Executable
+        shell: powershell
         run: |
-          pyinstaller hms_master_gui.spec --noconfirm --clean
+          python build_exe.py
 
-      - name: Verify Binary & Dynamic Audio Libraries
-        shell: pwsh
+      - name: Verify Binary Exists
+        shell: powershell
         run: |
           $exePath = "dist\hms_master_gui\hms_master_gui.exe"
           if (-not (Test-Path $exePath)) {
-            Write-Error "[FATAL] Compilation failed: $exePath not found."
+            Write-Error "[FATAL] Build failed: $exePath not found."
             exit 1
           }
-          Write-Host "[SUCCESS] Executable verified: $exePath" -ForegroundColor Green
+          Write-Host "[SUCCESS] Executable verified at $exePath" -ForegroundColor Green
 
-          $sndfileDlls = Get-ChildItem -Path "dist\hms_master_gui" -Filter "*sndfile*" -Recurse
-          if ($sndfileDlls) {
-            Write-Host "[SUCCESS] SoundFile dynamic C-libraries found in build output:" -ForegroundColor Green
-            $sndfileDlls | Select-Object Name, Length, FullName | Format-Table -AutoSize
-          } else {
-            Write-Warning "[WARN] libsndfile DLL not explicitly matched in root; checking internal packages..."
-          }
-
-      - name: Package Portable Distribution ZIP
-        shell: pwsh
+      - name: Package Portable ZIP
+        shell: powershell
         run: |
           $distFolder = "dist\hms_master_gui"
-          $zipOutput  = "dist\HMS_${{ github.ref_name }}_Portable.zip"
-          Write-Host "[RUN] Compressing $distFolder into $zipOutput..." -ForegroundColor Cyan
+          $zipOutput = "dist\HMS_${{ github.ref_name }}_Portable.zip"
           Compress-Archive -Path "$distFolder\*" -DestinationPath $zipOutput -Force
-          $sizeMb = [math]::Round((Get-Item $zipOutput).Length / 1MB, 2)
-          Write-Host "[SUCCESS] Created portable archive: $zipOutput ($sizeMb MB)" -ForegroundColor Green
 
       - name: Upload Binary to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/HMS_*_Portable.zip
