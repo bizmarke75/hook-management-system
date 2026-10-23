@@ -14,6 +14,10 @@ hiddenimports = [
     'numpy',
     'lazy_loader',
     'tkinter',
+    'hms_safety',
+    'hms_manifest',
+    'hms_metadata',
+    'hms_v31_patcher',
 ]
 
 for pkg in ['soundfile', 'librosa']:

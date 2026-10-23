@@ -29,6 +29,10 @@ foreach ($dir in $requiredDirs) {
 # 2. Verify mandatory codebase assets
 $criticalFiles = @(
     "hms_master_gui.py",
+    "hms_v31_patcher.py",
+    "hms_safety.py",
+    "hms_manifest.py",
+    "hms_metadata.py",
     "build_exe.py",
     "hms_master_gui.spec",
     "build_exe.bat",

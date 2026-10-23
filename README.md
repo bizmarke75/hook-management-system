@@ -34,6 +34,9 @@ hook-management-system/
 ├── build_exe.bat
 ├── hms_master_gui.py
 ├── hms_v31_patcher.py
+├── hms_safety.py
+├── hms_manifest.py
+├── hms_metadata.py
 ├── hms_master_gui.spec
 ├── requirements.txt
 ├── 337west_icon.ico
