@@ -826,6 +826,7 @@ def cli_bootstrap() -> argparse.Namespace:
 class HMSMasterGUI(tk.Tk):
     def __init__(self, dry_run: bool = False):
         super().__init__()
+        self.initial_dry_run = dry_run
         self.title("Hook Management System (HMS) v3.09 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
@@ -906,7 +907,7 @@ class HMSMasterGUI(tk.Tk):
         safety_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         safety_row.pack(fill="x", padx=8, pady=(0, 6))
 
-        self.dry_run_var = tk.BooleanVar(value=dry_run)
+        self.dry_run_var = tk.BooleanVar(value=self.initial_dry_run)
         tk.Checkbutton(
             safety_row,
             text="DRY RUN",
