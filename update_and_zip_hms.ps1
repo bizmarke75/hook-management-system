@@ -38,7 +38,7 @@ $criticalFiles = @(
     "build_exe.bat",
     "publish_release.ps1",
     "publish_release.bat",
-    ".github\workflows\build_release.yml",
+    ".github\workflows\build.yml",
     "README.md",
     "davinci_import_sop.md"
 )
@@ -60,7 +60,9 @@ if ($missing.Count -gt 0) {
 Write-Host "[STAGE] Preparing $OutputDir..." -ForegroundColor Cyan
 Remove-Item -Path "$OutputDir\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-$stageFiles = $criticalFiles + @("CHANGELOG.md", "update_and_zip_hms.ps1")
+$stageFiles = @(
+    $criticalFiles | Where-Object { $_ -ne ".github\workflows\build.yml" }
+) + @("CHANGELOG.md", "update_and_zip_hms.ps1")
 if (Test-Path "337west_icon.ico") {
     $stageFiles += "337west_icon.ico"
 }
@@ -74,7 +76,7 @@ foreach ($item in $stageFiles) {
 # Preserve GitHub Actions workflow hierarchy
 $workflowTarget = Join-Path $OutputDir ".github\workflows"
 New-Item -ItemType Directory -Path $workflowTarget -Force | Out-Null
-Copy-Item ".github\workflows\build_release.yml" -Destination $workflowTarget -Force
+Copy-Item ".github\workflows\build.yml" -Destination $workflowTarget -Force
 
 # 4. Generate distribution archive
 $zipName = "HMS_v$Version`_Release.zip"
