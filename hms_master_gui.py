@@ -168,6 +168,7 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     video_files.sort(key=lambda p: natural_sort_key(p.name))
     print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
 
+    # Phase 1: move every file to a unique temporary name first to avoid collisions.
     temp_paths = []
     for idx, old_file in enumerate(video_files, start=1):
         temp_name = f"__hms_tmp_{slug}_{idx}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.mp4"
@@ -182,8 +183,7 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
 
         if target_path.exists() and target_path != temp_path:
             backup_name = f"__hms_backup_{uuid.uuid4().hex[:8]}_{target_name}"
-            backup_path = r_path / backup_name
-            target_path.rename(backup_path)
+            target_path.rename(r_path / backup_name)
 
         temp_path.rename(target_path)
         renamed_files.append(target_path)
