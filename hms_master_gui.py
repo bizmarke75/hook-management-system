@@ -290,6 +290,10 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     total_frames = int(round(total_duration * fps))  # 40.0 * 24 = 960 frames
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
 
+    with sf.SoundFile(str(audio_wav), "r") as audio_reader:
+        audio_samplerate = audio_reader.samplerate
+        audio_channels = audio_reader.channels
+
     # 1. Load video assets
     r_path = Path(renders_dir).resolve()
     video_files = [f for f in r_path.iterdir() if f.is_file() and f.suffix.lower() == ".mp4"]
@@ -380,8 +384,8 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 										<audio>
 											<samplecharacteristics>
 												<depth>24</depth>
-												<samplerate>44100</samplerate>
-												<channelcount>2</channelcount>
+												<samplerate>{audio_samplerate}</samplerate>
+												<channelcount>{audio_channels}</channelcount>
 											</samplecharacteristics>
 										</audio>
 									</media>
