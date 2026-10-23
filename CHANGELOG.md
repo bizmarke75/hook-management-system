@@ -6,6 +6,7 @@ All notable changes to the Hook Management System (HMS) project will be document
 
 ### Added
 - Non-destructive dry-run planning, verify-only checks, per-run manifests, output backups, rename maps, and run restoration/rollback commands.
+- Split safety, manifest tracking, and ffprobe metadata utilities into reusable HMS modules.
 
 ## [v3.09] - 2026-10-23
 

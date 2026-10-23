@@ -6,12 +6,11 @@ Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
 Standard: modular-python-builder
 """
 
-import json
+import argparse
 import math
 import os
 import queue
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -22,7 +21,10 @@ from fractions import Fraction
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from hms_v31_patcher import RollbackStore, build_argument_parser, dispatch_cli
+from hms_metadata import probe_media
+from hms_manifest import ManifestStore
+from hms_safety import RollbackStore, is_dry_run, set_dry_run
+from hms_v31_patcher import build_argument_parser, dispatch_cli
 
 import librosa
 import numpy as np
@@ -64,82 +66,6 @@ def _validate_audio_analysis_size(audio_file: Path) -> None:
             f"Audio file is too large for in-memory analysis ({file_size_mb:.1f} MB > {MAX_ANALYSIS_FILE_MB} MB). "
             "Use a smaller source or a streaming analysis path in a future release."
         )
-
-
-def probe_media(path: Path) -> dict:
-    """Uses ffprobe to retrieve real media metadata for audio/video files."""
-    if not path.exists():
-        raise FileNotFoundError(f"Media file not found: {path}")
-
-    cmd = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-print_format",
-        "json",
-        "-show_streams",
-        "-show_format",
-        str(path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    data = json.loads(result.stdout)
-
-    streams = data.get("streams", [])
-    video = next((s for s in streams if s.get("codec_type") == "video"), None)
-    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
-
-    def as_float(value, default):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    def as_int(value, default):
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
-    duration = as_float(data.get("format", {}).get("duration"), 0.0)
-    if duration <= 0 and video:
-        duration = as_float(video.get("duration"), 0.0)
-    if duration <= 0 and audio:
-        duration = as_float(audio.get("duration"), 0.0)
-    video_fps = None
-    width = as_int(video.get("width"), 0) if video else 0
-    height = as_int(video.get("height"), 0) if video else 0
-    if video:
-        if width <= 0 or height <= 0:
-            raise ValueError(f"ffprobe did not report valid video dimensions for {path}.")
-        for candidate in (video.get("avg_frame_rate"), video.get("r_frame_rate")):
-            if not candidate:
-                continue
-            try:
-                if Fraction(str(candidate)) > 0:
-                    video_fps = str(candidate)
-                    break
-            except (ValueError, ZeroDivisionError):
-                continue
-        if video_fps is None:
-            raise ValueError(f"ffprobe did not report a valid video frame rate for {path}.")
-
-    return {
-        "width": width,
-        "height": height,
-        "fps": video_fps,
-        "has_video": video is not None,
-        "has_audio": audio is not None,
-        "samplerate": as_int(audio.get("sample_rate"), 44100) if audio else 44100,
-        "channels": as_int(audio.get("channels"), 2) if audio else 2,
-        "depth": as_int(
-            (audio or {}).get("bits_per_raw_sample") or (audio or {}).get("bits_per_sample"),
-            24,
-        ),
-        "duration": duration if duration > 0 else 0.0,
-        "audio_duration": (
-            as_float(audio.get("duration"), duration) if audio else 0.0
-        ),
-    }
 
 
 def _fcpxml_rate(fps_value: str | int | float) -> tuple[int, str, float]:
@@ -803,6 +729,7 @@ def execute_pipeline(
     duration: float = 40.0,
     dry_run: bool = False,
 ) -> Path | None:
+    dry_run = dry_run or is_dry_run()
     if dry_run:
         dry_run_pipeline(audio_path, renders_path, slug, bpm, duration)
         return None
@@ -870,8 +797,26 @@ def verify_pipeline_outputs(slug: str, renders_dir: str | None = None, duration:
         raise RuntimeError(f"Timeline verification failed: {xml_path}")
     print(f"[SUCCESS] Existing pipeline outputs verified: {slug}")
     return True
-    print(f"[SUCCESS] Verify-only passed for '{slug}'. No files were changed.")
-    return True
+
+
+def parse_cli() -> argparse.Namespace:
+    """Parse the command-line options shared by HMS launchers."""
+    return build_argument_parser().parse_args()
+
+
+def cli_bootstrap() -> argparse.Namespace:
+    """Handle CLI actions before launching the GUI."""
+    parser = build_argument_parser()
+    args = parse_cli()
+    if args.dry_run:
+        print("[INFO] HMS DRY-RUN mode enabled.")
+    try:
+        handled = dispatch_cli(args, gui_factory=HMSMasterGUI)
+    except Exception as error:
+        parser.error(str(error))
+    if handled:
+        raise SystemExit(0)
+    return args
 
 
 # ==============================================================================
@@ -949,18 +894,6 @@ class HMSMasterGUI(tk.Tk):
         self.run_all_btn = tk.Button(ctrl_frame, text="RUN COMPLETE PIPELINE (Steps 0 -> 4)", bg=self.accent_color, fg="white", font=("Consolas", 11, "bold"), command=self._start_complete_pipeline)
         self.run_all_btn.pack(fill="x", padx=8, pady=6)
 
-        self.dry_var = tk.BooleanVar(value=dry_run)
-        tk.Checkbutton(
-            ctrl_frame,
-            text="DRY RUN (plan only; do not change files)",
-            variable=self.dry_var,
-            bg=self.bg_color,
-            fg=self.fg_color,
-            selectcolor=self.panel_color,
-            activebackground=self.bg_color,
-            activeforeground=self.fg_color,
-        ).pack(anchor="w", padx=10, pady=(0, 4))
-
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -970,11 +903,51 @@ class HMSMasterGUI(tk.Tk):
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 4 (FCP7 XML)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(4)).pack(side="left", expand=True, fill="x", padx=2)
 
-        recovery_row = tk.Frame(ctrl_frame, bg=self.bg_color)
-        recovery_row.pack(fill="x", padx=8, pady=(0, 6))
-        tk.Button(recovery_row, text="VERIFY ONLY", bg=self.btn_bg, fg=self.fg_color, command=self._verify_only_async).pack(side="left", expand=True, fill="x", padx=2)
-        tk.Button(recovery_row, text="ROLLBACK LAST RUN", bg=self.btn_bg, fg=self.fg_color, command=self._rollback_last_run).pack(side="left", expand=True, fill="x", padx=2)
-        tk.Button(recovery_row, text="RESTORE RUN...", bg=self.btn_bg, fg=self.fg_color, command=self._restore_dialog).pack(side="left", expand=True, fill="x", padx=2)
+        safety_row = tk.Frame(ctrl_frame, bg=self.bg_color)
+        safety_row.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.dry_run_var = tk.BooleanVar(value=dry_run)
+        tk.Checkbutton(
+            safety_row,
+            text="DRY RUN",
+            variable=self.dry_run_var,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            selectcolor=self.panel_color,
+            activebackground=self.bg_color,
+            activeforeground=self.fg_color,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="LIST RUNS",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=self._list_runs_gui,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="ROLLBACK LAST RUN",
+            bg="#9c2b2e",
+            fg="white",
+            command=self._rollback_last_run_gui,
+        ).pack(side="left", padx=4)
+        tk.Button(
+            safety_row,
+            text="RESTORE RUN",
+            bg="#715500",
+            fg="white",
+            command=self._restore_run_gui,
+        ).pack(side="left", padx=4)
+
+        verify_row = tk.Frame(ctrl_frame, bg=self.bg_color)
+        verify_row.pack(fill="x", padx=8, pady=(0, 6))
+        tk.Button(
+            verify_row,
+            text="VERIFY ONLY",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=self._verify_only_async,
+        ).pack(side="left", expand=True, fill="x", padx=2)
 
         console_frame = tk.LabelFrame(self, text=" Diagnostic Stream (SafeLogRedirector) ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         console_frame.pack(fill="both", expand=True, padx=15, pady=(6, 12))
@@ -998,9 +971,15 @@ class HMSMasterGUI(tk.Tk):
 
     def _start_complete_pipeline(self):
         self.run_all_btn.config(state="disabled")
-        threading.Thread(target=self._execute_pipeline_worker, daemon=True).start()
+        dry_run = self.dry_run_var.get()
+        threading.Thread(
+            target=self._execute_pipeline_worker,
+            args=(dry_run,),
+            daemon=True,
+        ).start()
 
-    def _execute_pipeline_worker(self):
+    def _execute_pipeline_worker(self, dry_run: bool = False):
+        set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
@@ -1018,7 +997,7 @@ class HMSMasterGUI(tk.Tk):
                 slug,
                 bpm,
                 duration,
-                dry_run=self.dry_var.get(),
+                dry_run=dry_run,
             )
             if xml_path:
                 print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
@@ -1030,17 +1009,21 @@ class HMSMasterGUI(tk.Tk):
             self.run_all_btn.after(0, lambda: self.run_all_btn.config(state="normal"))
 
     def _run_step_async(self, step_idx):
-        threading.Thread(target=self._step_worker, args=(step_idx,), daemon=True).start()
+        dry_run = self.dry_run_var.get()
+        threading.Thread(
+            target=self._step_worker,
+            args=(step_idx, dry_run),
+            daemon=True,
+        ).start()
 
-    def _step_worker(self, step_idx):
+    def _step_worker(self, step_idx, dry_run: bool = False):
+        set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = _validate_duration(self.duration_var.get().strip())
-            dry_run = self.dry_var.get()
-
             if step_idx == 0:
                 run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run)
             elif step_idx == 1:
@@ -1069,13 +1052,34 @@ class HMSMasterGUI(tk.Tk):
             print(f"[ERROR] Verify-only failed: {error}")
             print(traceback.format_exc())
 
-    def _rollback_last_run(self):
+    def _list_runs_gui(self):
+        try:
+            runs = ManifestStore().list_runs()
+            if not runs:
+                messagebox.showinfo("HMS", "No snapshots found.", parent=self)
+                return
+            report = [
+                f"{run['run_id']}  |  {run.get('slug', '')}  |  "
+                f"{run.get('timestamp', '')}  |  {run.get('status', '')}"
+                for run in runs
+            ]
+            messagebox.showinfo(
+                "Snapshot History", "\n".join(report), parent=self
+            )
+        except Exception as error:
+            messagebox.showerror("Error", str(error), parent=self)
+
+    def _rollback_last_run_gui(self):
         if not messagebox.askyesno("Rollback last run", "Restore the most recent completed or failed run?"):
             return
         threading.Thread(target=self._recovery_worker, args=(None,), daemon=True).start()
 
-    def _restore_dialog(self):
-        run_id = simpledialog.askstring("Restore run", "Enter a run ID (for example, run_003):", parent=self)
+    def _restore_run_gui(self):
+        run_id = simpledialog.askstring(
+            "Restore run",
+            "Enter a run ID (for example, run_003):",
+            parent=self,
+        )
         if not run_id:
             return
         if not messagebox.askyesno("Restore run", f"Restore {run_id} and undo its renames and outputs?"):
@@ -1093,12 +1097,6 @@ class HMSMasterGUI(tk.Tk):
 
 
 if __name__ == "__main__":
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
-    try:
-        handled = dispatch_cli(arguments, gui_factory=HMSMasterGUI)
-    except Exception as error:
-        argument_parser.error(str(error))
-    if not handled:
-        app = HMSMasterGUI(dry_run=arguments.dry_run)
-        app.mainloop()
+    arguments = cli_bootstrap()
+    app = HMSMasterGUI(dry_run=arguments.dry_run)
+    app.mainloop()
