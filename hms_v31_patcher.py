@@ -21,6 +21,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="verify existing outputs without changing files",
     )
+    actions.add_argument(
+        "--verify",
+        action="store_true",
+        help="print a verification-mode notice before opening the GUI",
+    )
+    actions.add_argument(
+        "--list-runs",
+        action="store_true",
+        help="display available run snapshots",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -36,12 +46,42 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def dispatch_cli(args, gui_factory=None):
     """Run a requested CLI operation; return False when the GUI should open."""
-    if args.dry_run and (args.rollback or args.restore or args.verify_only):
+    if args.dry_run and (
+        args.rollback
+        or args.restore
+        or args.verify_only
+        or args.verify
+        or args.list_runs
+    ):
         raise ValueError(
-            "--dry-run cannot be combined with rollback, restore, or verify-only."
+            "--dry-run cannot be combined with rollback, restore, or verify modes."
         )
-    if (args.rollback or args.restore) and (args.audio or args.renders or args.slug):
-        raise ValueError("Rollback and restore cannot be combined with pipeline arguments.")
+    if (args.rollback or args.restore or args.list_runs) and (
+        args.audio or args.renders or args.slug
+    ):
+        raise ValueError(
+            "Rollback, restore, and list-runs cannot be combined with pipeline arguments."
+        )
+    if args.verify and (args.audio or args.renders or args.slug):
+        raise ValueError("--verify cannot be combined with pipeline arguments.")
+    if args.list_runs:
+        from hms_manifest import ManifestStore
+
+        runs = ManifestStore().list_runs()
+        print()
+        print("==================================")
+        print(" HMS Run History")
+        print("==================================")
+        if not runs:
+            print("No runs found.")
+        else:
+            for run in runs:
+                print(
+                    f"{run['run_id']} | {run.get('slug', '')} | "
+                    f"{run.get('timestamp', '')} | {run.get('status', '')}"
+                )
+        print()
+        return True
     if args.rollback or args.restore:
         from hms_safety import RollbackStore
 
@@ -62,6 +102,8 @@ def dispatch_cli(args, gui_factory=None):
 
         verify_pipeline_outputs(args.slug, args.renders, args.duration)
         return True
+    if args.verify:
+        print("[INFO] VERIFY mode enabled.")
 
     cli_run_requested = bool(args.audio or args.renders or args.slug)
     if args.dry_run or cli_run_requested:

@@ -88,9 +88,11 @@ python hms_v31_patcher.py --dry-run --audio "C:\audio\track.wav" --renders "C:\r
 python hms_v31_patcher.py --verify-only --slug track --renders "C:\renders"
 python hms_v31_patcher.py --rollback
 python hms_v31_patcher.py --restore run_003
+python hms_master_gui.py --list-runs
+python hms_master_gui.py --verify
 ```
 
-To run the GUI with dry-run enabled, use `python hms_master_gui.py --dry-run`. A normal CLI pipeline run accepts the same `--audio`, `--renders`, and `--slug` arguments without `--dry-run`.
+To open the GUI with dry-run enabled, use `python hms_master_gui.py --dry-run`; `--verify` prints a verification-mode notice before opening the GUI. `--verify-only --slug track` performs the existing headless output check. A normal CLI pipeline run accepts the same `--audio`, `--renders`, and `--slug` arguments without `--dry-run`.
 
 ## Build and release automation
 

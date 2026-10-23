@@ -6,6 +6,7 @@ Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
 Standard: modular-python-builder
 """
 
+import argparse
 import math
 import os
 import queue
@@ -795,8 +796,26 @@ def verify_pipeline_outputs(slug: str, renders_dir: str | None = None, duration:
         raise RuntimeError(f"Timeline verification failed: {xml_path}")
     print(f"[SUCCESS] Existing pipeline outputs verified: {slug}")
     return True
-    print(f"[SUCCESS] Verify-only passed for '{slug}'. No files were changed.")
-    return True
+
+
+def parse_cli() -> argparse.Namespace:
+    """Parse the command-line options shared by HMS launchers."""
+    return build_argument_parser().parse_args()
+
+
+def cli_bootstrap() -> argparse.Namespace:
+    """Handle CLI actions before launching the GUI."""
+    parser = build_argument_parser()
+    args = parse_cli()
+    if args.dry_run:
+        print("[INFO] HMS DRY-RUN mode enabled.")
+    try:
+        handled = dispatch_cli(args, gui_factory=HMSMasterGUI)
+    except Exception as error:
+        parser.error(str(error))
+    if handled:
+        raise SystemExit(0)
+    return args
 
 
 # ==============================================================================
@@ -1018,12 +1037,6 @@ class HMSMasterGUI(tk.Tk):
 
 
 if __name__ == "__main__":
-    argument_parser = build_argument_parser()
-    arguments = argument_parser.parse_args()
-    try:
-        handled = dispatch_cli(arguments, gui_factory=HMSMasterGUI)
-    except Exception as error:
-        argument_parser.error(str(error))
-    if not handled:
-        app = HMSMasterGUI(dry_run=arguments.dry_run)
-        app.mainloop()
+    arguments = cli_bootstrap()
+    app = HMSMasterGUI(dry_run=arguments.dry_run)
+    app.mainloop()
