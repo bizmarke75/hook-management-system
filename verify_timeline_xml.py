@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.09
+337 West Productions - Hook Management System (HMS) v3.1
 Module: verify_timeline_xml.py
 Purpose: Headless audit tool for DaVinci Resolve Free FCP 7 XML (xmeml v5) timelines.
 Standard: modular-python-builder

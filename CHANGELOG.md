@@ -2,11 +2,20 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
-## [Unreleased]
+## [v3.1] - 2026-10-23
 
 ### Added
-- Non-destructive dry-run planning, verify-only checks, per-run manifests, output backups, rename maps, and run restoration/rollback commands.
-- Split safety, manifest tracking, and ffprobe metadata utilities into reusable HMS modules.
+- GUI safety controls for dry-run, snapshot history, rollback, and restoring a selected run.
+- CLI bootstrap and run-history commands, including dry-run, verification, rollback, and restore operations.
+- Per-run manifests, rename maps, output backups, and guarded recovery through reusable safety and metadata modules.
+- ffprobe-backed source metadata and linked source audio on a separate timeline lane.
+
+### Fixed
+- GUI dry-run checkbox initialization so the application starts cleanly.
+
+### Changed
+- Updated the Resolve import and recovery documentation for HMS v3.1.
+- Verified that the generated FCP 7 XML imports successfully into DaVinci Resolve.
 
 ## [v3.09] - 2026-10-23
 
@@ -20,7 +29,6 @@ All notable changes to the Hook Management System (HMS) project will be document
 - Reel metadata with ffprobe-derived source video dimensions and frame rates.
 - Safe two-phase temp renaming strategy to prevent overwrite risk during shot sequencing.
 - Audio length verification and BPM/duration validation guards.
-- ffprobe-derived shot resolution and frame-rate metadata, with embedded shot audio linked on a separate timeline lane.
 - Optional GUI stdout guard for execution environments that prefer cleaner console behavior.
 
 ### Fixed
