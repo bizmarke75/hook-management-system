@@ -26,6 +26,13 @@ import numpy as np
 import soundfile as sf
 import librosa
 
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+MAX_ANALYSIS_FILE_MB = 512
+
 
 # ==============================================================================
 # THREAD-SAFE CONSOLE REDIRECTOR
@@ -33,7 +40,7 @@ import librosa
 
 class SafeLogRedirector:
     """
-    Thread-safe stream redirector capturing stdout/stderr into both the 
+    Thread-safe stream redirector capturing stdout/stderr into both the
     native CLI console and the Tkinter ScrolledText widget.
     """
     def __init__(self, text_widget, original_stream):
@@ -63,6 +70,38 @@ class SafeLogRedirector:
 # PIPELINE STEP 0: RMS ENERGY SLIDING-WINDOW & RELATIVE BEAT TRACKER
 # ==============================================================================
 
+
+def _validate_bpm(bpm_value: float) -> float:
+    bpm = float(bpm_value)
+    if not 40.0 <= bpm <= 300.0:
+        raise ValueError(f"BPM must be between 40 and 300 (got {bpm}).")
+    return bpm
+
+
+def _validate_audio_analysis_size(audio_file: Path) -> None:
+    if not audio_file.exists():
+        raise FileNotFoundError(f"Source audio file not found: {audio_file}")
+
+    file_size_mb = audio_file.stat().st_size / (1024 * 1024)
+    if file_size_mb > MAX_ANALYSIS_FILE_MB:
+        raise ValueError(
+            f"Audio file is too large for in-memory analysis ({file_size_mb:.1f} MB > {MAX_ANALYSIS_FILE_MB} MB). "
+            "Use a smaller source or a streaming analysis path in a future release."
+        )
+
+
+def _verify_video_dimensions(v_file: Path) -> tuple[int, int] | None:
+    if Image is None:
+        return None
+
+    try:
+        with Image.open(v_file) as img:
+            width, height = img.size
+            return width, height
+    except Exception:
+        return None
+
+
 def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 170.0, window_duration: float = 40.0) -> dict:
     """
     Detects the peak RMS energy 40.0s hook window and tracks beat transients.
@@ -70,13 +109,12 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     """
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
-    if not audio_file.exists():
-        raise FileNotFoundError(f"Source audio file not found: {audio_file}")
+    _validate_audio_analysis_size(audio_file)
+    bpm = _validate_bpm(target_bpm)
 
     output_dir = Path("output").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load audio with librosa for signal analysis
     print(f"[INFO] Reading '{audio_file.name}' for RMS sliding-window analysis...")
     y, sr = librosa.load(str(audio_file), sr=22050, mono=True)
     total_duration = librosa.get_duration(y=y, sr=sr)
@@ -85,7 +123,6 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     if total_duration < window_duration:
         raise ValueError(f"Audio duration ({total_duration:.2f}s) is shorter than target window ({window_duration}s).")
 
-    # 2. Sliding window RMS calculation
     print(f"[INFO] Computing RMS energy curve across {window_duration}s window...")
     frame_length = 2048
     hop_length = 512
@@ -93,7 +130,6 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     frames_per_sec = sr / hop_length
     window_frames = int(window_duration * frames_per_sec)
 
-    # Convolve with rectangular window to sum energy
     window_kernel = np.ones(window_frames)
     integrated_energy = np.convolve(rms, window_kernel, mode="valid")
 
@@ -102,24 +138,21 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     hook_end_s = round(hook_start_s + window_duration, 3)
     print(f"[SUCCESS] Hook window identified: {hook_start_s:.3f}s -> {hook_end_s:.3f}s ({window_duration:.1f}s window)")
 
-    # 3. Beat tracking within the selected hook window
-    print(f"[INFO] Tracking beat transients (Target BPM ~{target_bpm})...")
+    print(f"[INFO] Tracking beat transients (Target BPM ~{bpm})...")
     hook_sample_start = int(hook_start_s * sr)
     hook_sample_end = int(hook_end_s * sr)
     y_hook = y[hook_sample_start:hook_sample_end]
 
-    tempo, beat_frames = librosa.beat.beat_track(y=y_hook, sr=sr, hop_length=hop_length, start_bpm=target_bpm)
+    tempo, beat_frames = librosa.beat.beat_track(y=y_hook, sr=sr, hop_length=hop_length, start_bpm=bpm)
     if isinstance(tempo, np.ndarray):
-        tempo = float(tempo[0]) if tempo.size > 0 else target_bpm
+        tempo = float(tempo[0]) if tempo.size > 0 else bpm
     tempo_val = float(tempo)
     print(f"[INFO] Estimated local tempo: {tempo_val:.2f} BPM.")
 
-    # Convert beat frames to relative timeline seconds (0.000s -> 40.000s)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop_length)
     relative_beats = [round(float(b), 3) for b in beat_times if 0.0 <= b <= window_duration]
     print(f"[INFO] Captured {len(relative_beats)} relative transient pins.")
 
-    # 4. Save metadata outputs
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
     beats_file = output_dir / f"{slug}_thebeats.txt"
 
@@ -143,6 +176,7 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
 # PIPELINE STEP 1: NATURAL SORT SHOT SEQUENCE RENAMER
 # ==============================================================================
 
+
 def natural_sort_key(s):
     """Sorts strings containing numbers in standard human order (shot1, shot2, shot10)."""
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
@@ -164,11 +198,9 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     if not video_files:
         raise ValueError(f"No video files ({', '.join(extensions)}) found in {r_path}")
 
-    # Natural sort
     video_files.sort(key=lambda p: natural_sort_key(p.name))
     print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
 
-    # Phase 1: move every file to a unique temporary name first to avoid collisions.
     temp_paths = []
     for idx, old_file in enumerate(video_files, start=1):
         temp_name = f"__hms_tmp_{slug}_{idx}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.mp4"
@@ -196,6 +228,7 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
 # PIPELINE STEP 2: SUB-SECOND 24-BIT PCM STEREO WAV TRIMMER (SOUNDFILE)
 # ==============================================================================
 
+
 def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
     """
     Trims master audio exactly to the 40.000s hook window using SoundFile.
@@ -216,7 +249,6 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
     print(f"[INFO] Trimming audio: start = {hook_start_s:.3f}s, duration = {duration_s:.3f}s")
     target_wav = output_dir / f"{slug}_master_audio.wav"
 
-    # SoundFile stream extraction
     with sf.SoundFile(str(audio_path), "r") as reader:
         sr = reader.samplerate
         channels = reader.channels
@@ -232,10 +264,8 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
             f"Input file may be shorter than expected."
         )
 
-    # Export strictly as 24-bit PCM WAV
     sf.write(str(target_wav), audio_data, samplerate=sr, subtype="PCM_24")
 
-    # Verify output file size
     file_size_mb = target_wav.stat().st_size / (1024 * 1024)
     if file_size_mb < 1.0:
         raise IOError(f"Trimmed WAV file size is abnormally small ({file_size_mb:.2f} MB). Possible 44-byte header corruption.")
@@ -247,6 +277,7 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
 # ==============================================================================
 # PIPELINE STEP 3: METADATA & STATE SYNCHRONIZATION
 # ==============================================================================
+
 
 def run_step_3_sync_metadata(slug: str) -> dict:
     """
@@ -274,6 +305,7 @@ def run_step_3_sync_metadata(slug: str) -> dict:
 # PIPELINE STEP 4: DAVINCI RESOLVE FCP 7 XML (xmeml v5) GENERATOR
 # ==============================================================================
 
+
 def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, total_duration: float = 40.0) -> Path:
     """
     Generates an Apple Final Cut Pro 7 XML timeline for DaVinci Resolve Free.
@@ -287,14 +319,13 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     if not audio_wav.exists() or not beats_file.exists():
         raise FileNotFoundError("Missing master audio or beats file in output/. Run Steps 0-3 first.")
 
-    total_frames = int(round(total_duration * fps))  # 40.0 * 24 = 960 frames
+    total_frames = int(round(total_duration * fps))
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
 
     with sf.SoundFile(str(audio_wav), "r") as audio_reader:
         audio_samplerate = audio_reader.samplerate
         audio_channels = audio_reader.channels
 
-    # 1. Load video assets
     r_path = Path(renders_dir).resolve()
     video_files = [f for f in r_path.iterdir() if f.is_file() and f.suffix.lower() == ".mp4"]
     video_files.sort(key=lambda p: natural_sort_key(p.name))
@@ -307,7 +338,6 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     remainder_frames = total_frames % num_clips
     print(f"[INFO] Distributing {num_clips} video clips across {total_frames} frames...")
 
-    # 2. Build Video Track XML
     video_clipitems_xml = []
     current_frame = 0
 
@@ -317,11 +347,18 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
         end_frame = current_frame + clip_dur
         current_frame = end_frame
 
+        dim = _verify_video_dimensions(v_file)
+        if dim is not None:
+            width, height = dim
+            if (width, height) != (1920, 1080):
+                print(f"[WARN] Video dimensions differ from default Resolve template: {v_file.name} -> {width}x{height}.")
+
         norm_path = str(v_file.resolve()).replace("\\", "/")
         if not norm_path.startswith("/"):
             norm_path = "/" + norm_path
         file_url = f"file://localhost{urllib.parse.quote(norm_path)}"
 
+        reel_name = v_file.stem
         clip_item = f"""
 							<clipitem id="clipitem-video-{idx+1}">
 								<name>{escape(v_file.name)}</name>
@@ -334,6 +371,9 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 								<out>{clip_dur}</out>
 								<start>{start_frame}</start>
 								<end>{end_frame}</end>
+								<reel>
+									<name>{escape(reel_name)}</name>
+								</reel>
 								<file id="file-video-{idx+1}">
 									<name>{escape(v_file.name)}</name>
 									<pathurl>{file_url}</pathurl>
@@ -354,12 +394,12 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 							</clipitem>"""
         video_clipitems_xml.append(clip_item)
 
-    # 3. Build Audio Track XML (Evaluating total_frames directly to prevent template leaks)
     norm_audio = str(audio_wav.resolve()).replace("\\", "/")
     if not norm_audio.startswith("/"):
         norm_audio = "/" + norm_audio
     audio_url = f"file://localhost{urllib.parse.quote(norm_audio)}"
 
+    sequence_id = str(uuid.uuid4())
     audio_clipitem_xml = f"""
 							<clipitem id="clipitem-audio-1">
 								<name>{escape(slug)}_master_audio.wav</name>
@@ -392,7 +432,6 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 								</file>
 							</clipitem>"""
 
-    # 4. Build Transient Marker Nodes
     beats = [float(b.strip()) for b in beats_file.read_text(encoding="utf-8").splitlines() if b.strip()]
     markers_xml = []
     marker_count = 0
@@ -413,11 +452,10 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 
     print(f"[INFO] Encoded {marker_count} transient markers inside 0 <= frame < {total_frames}.")
 
-    # 5. Assemble Sequence Document
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE xmeml>
 <xmeml version="5">
-	<sequence id="sequence-1">
+	<sequence id="{sequence_id}">
 		<name>{escape(slug)}_davinci_timeline</name>
 		<duration>{total_frames}</duration>
 		<rate>
@@ -469,7 +507,6 @@ class HMSMasterGUI(tk.Tk):
         self.geometry("960x780")
         self.minsize(800, 600)
 
-        # Apply Dark Theme Colors
         self.bg_color = "#1e1e1e"
         self.panel_color = "#252526"
         self.fg_color = "#d4d4d4"
@@ -480,9 +517,9 @@ class HMSMasterGUI(tk.Tk):
         self._setup_styles()
         self._create_widgets()
 
-        # Redirect standard streams to console text area
-        sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
-        sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
+        if os.environ.get("HMS_DISABLE_GUI_REDIRECT") != "1":
+            sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
+            sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
         print("[INFO] Hook Management System (HMS) v3.0.0 initialized.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
@@ -495,29 +532,24 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        # Header
         header = ttk.Label(self, text="HMS v3.0.0 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
-        # Parameters Frame
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         param_frame.pack(fill="x", padx=15, pady=6)
 
-        # Row 0: Audio Path
         tk.Label(param_frame, text="Master Audio:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).grid(row=0, column=0, sticky="w", padx=8, pady=4)
         self.audio_var = tk.StringVar(value="")
         self.audio_entry = tk.Entry(param_frame, textvariable=self.audio_var, width=65, bg=self.panel_color, fg=self.fg_color, insertbackground=self.fg_color)
         self.audio_entry.grid(row=0, column=1, padx=4, pady=4)
         tk.Button(param_frame, text="Browse Audio", command=self._browse_audio, bg=self.btn_bg, fg=self.fg_color).grid(row=0, column=2, padx=6, pady=4)
 
-        # Row 1: Renders Path
         tk.Label(param_frame, text="Renders Dir:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).grid(row=1, column=0, sticky="w", padx=8, pady=4)
         self.renders_var = tk.StringVar(value=str(Path("C:/renders").resolve()))
         self.renders_entry = tk.Entry(param_frame, textvariable=self.renders_var, width=65, bg=self.panel_color, fg=self.fg_color, insertbackground=self.fg_color)
         self.renders_entry.grid(row=1, column=1, padx=4, pady=4)
         tk.Button(param_frame, text="Browse Folder", command=self._browse_renders, bg=self.btn_bg, fg=self.fg_color).grid(row=1, column=2, padx=6, pady=4)
 
-        # Row 2: Slug & BPM & Duration
         meta_subframe = tk.Frame(param_frame, bg=self.bg_color)
         meta_subframe.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=6)
 
@@ -533,15 +565,12 @@ class HMSMasterGUI(tk.Tk):
         self.duration_var = tk.StringVar(value="40.0")
         tk.Entry(meta_subframe, textvariable=self.duration_var, width=8, bg=self.panel_color, fg=self.fg_color).pack(side="left", padx=(4, 16))
 
-        # Execution Controls Frame
         ctrl_frame = tk.LabelFrame(self, text=" Pipeline Execution ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         ctrl_frame.pack(fill="x", padx=15, pady=6)
 
-        # Master Button
         self.run_all_btn = tk.Button(ctrl_frame, text="RUN COMPLETE PIPELINE (Steps 0 -> 4)", bg=self.accent_color, fg="white", font=("Consolas", 11, "bold"), command=self._start_complete_pipeline)
         self.run_all_btn.pack(fill="x", padx=8, pady=6)
 
-        # Individual Step Buttons
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -551,7 +580,6 @@ class HMSMasterGUI(tk.Tk):
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 4 (FCP7 XML)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(4)).pack(side="left", expand=True, fill="x", padx=2)
 
-        # Console Area
         console_frame = tk.LabelFrame(self, text=" Diagnostic Stream (SafeLogRedirector) ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         console_frame.pack(fill="both", expand=True, padx=15, pady=(6, 12))
 
@@ -581,7 +609,7 @@ class HMSMasterGUI(tk.Tk):
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
-            bpm = float(self.bpm_var.get().strip())
+            bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = float(self.duration_var.get().strip())
 
             if not audio_path:
@@ -592,7 +620,6 @@ class HMSMasterGUI(tk.Tk):
             print(f"STARTING HMS MASTER PIPELINE: {slug.upper()}")
             print("=======================================================")
 
-            # Execute Steps 0 -> 4
             run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
             run_step_1_shot_renamer(renders_path, slug)
             run_step_2_audio_trimmer(audio_path, slug)
@@ -619,7 +646,7 @@ class HMSMasterGUI(tk.Tk):
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
-            bpm = float(self.bpm_var.get().strip())
+            bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = float(self.duration_var.get().strip())
 
             if step_idx == 0:
