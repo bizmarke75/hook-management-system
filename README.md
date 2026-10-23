@@ -29,8 +29,7 @@ hook-management-system/
 │   └── DAVINCI_RESOLVE_SOP.md
 ├── .github/
 │   └── workflows/
-│       ├── build.yml
-│       └── build_release.yml
+│       └── build.yml
 ├── build_exe.py
 ├── build_exe.bat
 ├── hms_master_gui.py
@@ -75,7 +74,7 @@ This generates a Windows executable in the `dist` directory.
 
 ## Build and release automation
 
-The repository includes GitHub Actions workflows in `.github/workflows/` to:
+The GitHub Actions workflow in `.github/workflows/build.yml`:
 
 - install dependencies
 - run the PyInstaller build from `build_exe.py`
