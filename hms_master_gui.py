@@ -15,7 +15,9 @@ import queue
 import urllib.parse
 import threading
 import traceback
+import uuid
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
@@ -145,6 +147,7 @@ def natural_sort_key(s):
     """Sorts strings containing numbers in standard human order (shot1, shot2, shot10)."""
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
 
+
 def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     """
     Audits and renames render video clips sequentially (shot1.mp4 ... shotN.mp4)
@@ -165,21 +168,24 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     video_files.sort(key=lambda p: natural_sort_key(p.name))
     print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
 
-    renamed_files = []
+    temp_paths = []
     for idx, old_file in enumerate(video_files, start=1):
+        temp_name = f"__hms_tmp_{slug}_{idx}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.mp4"
+        temp_path = r_path / temp_name
+        old_file.rename(temp_path)
+        temp_paths.append((temp_path, idx))
+
+    renamed_files = []
+    for temp_path, idx in temp_paths:
         target_name = f"shot{idx}.mp4"
         target_path = r_path / target_name
 
-        if old_file.name == target_name:
-            renamed_files.append(target_path)
-            continue
+        if target_path.exists() and target_path != temp_path:
+            backup_name = f"__hms_backup_{uuid.uuid4().hex[:8]}_{target_name}"
+            backup_path = r_path / backup_name
+            target_path.rename(backup_path)
 
-        if target_path.exists() and target_path != old_file:
-            temp_path = r_path / f"__temp_shot{idx}_{int(time.time())}.mp4"
-            old_file.rename(temp_path)
-            old_file = temp_path
-
-        old_file.rename(target_path)
+        temp_path.rename(target_path)
         renamed_files.append(target_path)
 
     print(f"[SUCCESS] Confirmed {len(renamed_files)} sequential shots (shot1.mp4 -> shot{len(renamed_files)}.mp4).")
@@ -219,6 +225,12 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
 
         reader.seek(start_frame)
         audio_data = reader.read(frames=total_frames, dtype="float32")
+
+    if len(audio_data) < total_frames:
+        raise ValueError(
+            f"Short read while trimming audio: requested {total_frames} frames but only {len(audio_data)} frames were read. "
+            f"Input file may be shorter than expected."
+        )
 
     # Export strictly as 24-bit PCM WAV
     sf.write(str(target_wav), audio_data, samplerate=sr, subtype="PCM_24")
@@ -307,35 +319,35 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
         file_url = f"file://localhost{urllib.parse.quote(norm_path)}"
 
         clip_item = f"""
-						<clipitem id="clipitem-video-{idx+1}">
-							<name>{v_file.name}</name>
-							<duration>{clip_dur}</duration>
-							<rate>
-								<timebase>{fps}</timebase>
-								<ntsc>FALSE</ntsc>
-							</rate>
-							<in>0</in>
-							<out>{clip_dur}</out>
-							<start>{start_frame}</start>
-							<end>{end_frame}</end>
-							<file id="file-video-{idx+1}">
-								<name>{v_file.name}</name>
-								<pathurl>{file_url}</pathurl>
+							<clipitem id="clipitem-video-{idx+1}">
+								<name>{escape(v_file.name)}</name>
+								<duration>{clip_dur}</duration>
 								<rate>
 									<timebase>{fps}</timebase>
 									<ntsc>FALSE</ntsc>
 								</rate>
-								<duration>{clip_dur}</duration>
-								<media>
-									<video>
-										<samplecharacteristics>
-											<width>1920</width>
-											<height>1080</height>
-										</samplecharacteristics>
-									</video>
-								</media>
-							</file>
-						</clipitem>"""
+								<in>0</in>
+								<out>{clip_dur}</out>
+								<start>{start_frame}</start>
+								<end>{end_frame}</end>
+								<file id="file-video-{idx+1}">
+									<name>{escape(v_file.name)}</name>
+									<pathurl>{file_url}</pathurl>
+									<rate>
+										<timebase>{fps}</timebase>
+										<ntsc>FALSE</ntsc>
+									</rate>
+									<duration>{clip_dur}</duration>
+									<media>
+										<video>
+											<samplecharacteristics>
+												<width>1920</width>
+												<height>1080</height>
+											</samplecharacteristics>
+										</video>
+									</media>
+								</file>
+							</clipitem>"""
         video_clipitems_xml.append(clip_item)
 
     # 3. Build Audio Track XML (Evaluating total_frames directly to prevent template leaks)
@@ -345,36 +357,36 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     audio_url = f"file://localhost{urllib.parse.quote(norm_audio)}"
 
     audio_clipitem_xml = f"""
-						<clipitem id="clipitem-audio-1">
-							<name>{slug}_master_audio.wav</name>
-							<duration>{total_frames}</duration>
-							<rate>
-								<timebase>{fps}</timebase>
-								<ntsc>FALSE</ntsc>
-							</rate>
-							<in>0</in>
-							<out>{total_frames}</out>
-							<start>0</start>
-							<end>{total_frames}</end>
-							<file id="file-audio-1">
-								<name>{slug}_master_audio.wav</name>
-								<pathurl>{audio_url}</pathurl>
+							<clipitem id="clipitem-audio-1">
+								<name>{escape(slug)}_master_audio.wav</name>
+								<duration>{total_frames}</duration>
 								<rate>
 									<timebase>{fps}</timebase>
 									<ntsc>FALSE</ntsc>
 								</rate>
-								<duration>{total_frames}</duration>
-								<media>
-									<audio>
-										<samplecharacteristics>
-											<depth>24</depth>
-											<samplerate>44100</samplerate>
-										</samplecharacteristics>
-										<channelcount>2</channelcount>
-									</audio>
-								</media>
-							</file>
-						</clipitem>"""
+								<in>0</in>
+								<out>{total_frames}</out>
+								<start>0</start>
+								<end>{total_frames}</end>
+								<file id="file-audio-1">
+									<name>{escape(slug)}_master_audio.wav</name>
+									<pathurl>{audio_url}</pathurl>
+									<rate>
+										<timebase>{fps}</timebase>
+										<ntsc>FALSE</ntsc>
+									</rate>
+									<duration>{total_frames}</duration>
+									<media>
+										<audio>
+											<samplecharacteristics>
+												<depth>24</depth>
+												<samplerate>44100</samplerate>
+												<channelcount>2</channelcount>
+											</samplecharacteristics>
+										</audio>
+									</media>
+								</file>
+							</clipitem>"""
 
     # 4. Build Transient Marker Nodes
     beats = [float(b.strip()) for b in beats_file.read_text(encoding="utf-8").splitlines() if b.strip()]
@@ -402,7 +414,7 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 <!DOCTYPE xmeml>
 <xmeml version="5">
 	<sequence id="sequence-1">
-		<name>{slug}_davinci_timeline</name>
+		<name>{escape(slug)}_davinci_timeline</name>
 		<duration>{total_frames}</duration>
 		<rate>
 			<timebase>{fps}</timebase>
