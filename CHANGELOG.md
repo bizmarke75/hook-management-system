@@ -16,6 +16,7 @@ All notable changes to the Hook Management System (HMS) project will be document
 ### Changed
 - Updated the Resolve import and recovery documentation for HMS v3.1.
 - Verified that the generated FCP 7 XML imports successfully into DaVinci Resolve.
+- Integrated the XML validator into the CLI module to keep the repository layout compact.
 
 ## [v3.09] - 2026-10-23
 
@@ -51,7 +52,7 @@ All notable changes to the Hook Management System (HMS) project will be document
 - RMS sliding-window hook detector with relative timeline sync.
 - Sub-second 24-bit PCM WAV trimmer bypassing BWF chunk issues.
 - Gapless 24fps FCP 7 XML generator with transient beat pins.
-- Headless timeline validator via `verify_timeline_xml.py`.
+- Headless timeline validator for generated FCP 7 XML.
 - Automated Windows PyInstaller build and release packaging flow.
 
 ### Changed

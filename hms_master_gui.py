@@ -788,7 +788,7 @@ def verify_pipeline_outputs(slug: str, renders_dir: str | None = None, duration:
         if not any(path.is_file() for path in renders_path.glob("shot*.mp4")):
             raise FileNotFoundError(f"No sequenced shot*.mp4 files found in {renders_path}")
 
-    from verify_timeline_xml import verify_davinci_xml
+    from hms_v31_patcher import verify_davinci_xml
 
     xml_path = required[-1]
     if duration != 40.0:
