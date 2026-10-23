@@ -15,6 +15,7 @@ dist/
 
 # Local runtime output
 output/
+rollback/
 release_payload/
 *.zip
 

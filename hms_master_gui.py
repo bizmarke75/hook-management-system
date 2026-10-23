@@ -22,11 +22,13 @@ from fractions import Fraction
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from hms_v31_patcher import RollbackStore, build_argument_parser, dispatch_cli
+
 import librosa
 import numpy as np
 import soundfile as sf
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 MAX_ANALYSIS_FILE_MB = 512
 
@@ -251,7 +253,13 @@ class SafeLogRedirector:
 # ==============================================================================
 
 
-def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 170.0, window_duration: float = 40.0) -> dict:
+def run_step_0_audio_analysis(
+    audio_path: str,
+    slug: str,
+    target_bpm: float = 170.0,
+    window_duration: float = 40.0,
+    dry_run: bool = False,
+) -> dict:
     """Detects the peak RMS energy 40.0s hook window and tracks beat transients."""
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
@@ -260,7 +268,6 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     window_duration = _validate_duration(window_duration)
 
     output_dir = Path("output").resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[INFO] Reading '{audio_file.name}' for RMS sliding-window analysis...")
     y, sr = librosa.load(str(audio_file), sr=22050, mono=True)
@@ -303,11 +310,15 @@ def run_step_0_audio_analysis(audio_path: str, slug: str, target_bpm: float = 17
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
     beats_file = output_dir / f"{slug}_thebeats.txt"
 
-    hook_file.write_text(f"{hook_start_s:.3f}\n{hook_end_s:.3f}\n{window_duration:.3f}\n", encoding="utf-8")
-    beats_file.write_text("\n".join(f"{b:.3f}" for b in relative_beats) + "\n", encoding="utf-8")
-
-    print(f"[SUCCESS] Saved hook timestamps: {hook_file.name}")
-    print(f"[SUCCESS] Saved relative beat markers: {beats_file.name}")
+    if dry_run:
+        print(f"[DRY-RUN] Would write hook timestamps: {hook_file}")
+        print(f"[DRY-RUN] Would write {len(relative_beats)} beat markers: {beats_file}")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        hook_file.write_text(f"{hook_start_s:.3f}\n{hook_end_s:.3f}\n{window_duration:.3f}\n", encoding="utf-8")
+        beats_file.write_text("\n".join(f"{b:.3f}" for b in relative_beats) + "\n", encoding="utf-8")
+        print(f"[SUCCESS] Saved hook timestamps: {hook_file.name}")
+        print(f"[SUCCESS] Saved relative beat markers: {beats_file.name}")
 
     return {
         "slug": slug,
@@ -329,7 +340,12 @@ def natural_sort_key(s):
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
 
 
-def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
+def run_step_1_shot_renamer(
+    renders_dir: str,
+    slug: str,
+    dry_run: bool = False,
+    rename_map_callback=None,
+) -> list:
     """Renames render clips into a safe, zero-collision shot sequence."""
     print(f"\n[RUN] Step 1: Auditing and standardizing render clips in '{renders_dir}'...")
     r_path = Path(renders_dir).resolve()
@@ -345,17 +361,59 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
     video_files.sort(key=lambda p: natural_sort_key(p.name))
     print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
 
-    temp_files = []
-    for index, current in enumerate(video_files):
-        temp_path = r_path / f"__hms_tmp_{slug}_{index}_{uuid.uuid4().hex[:8]}.tmp"
-        current.rename(temp_path)
-        temp_files.append(temp_path)
+    rename_map = [
+        {"original": current.name, "new": f"shot{index}.mp4"}
+        for index, current in enumerate(video_files, start=1)
+    ]
+    if dry_run:
+        for item in rename_map:
+            print(f"[DRY-RUN] Rename {item['original']} -> {item['new']}")
+        return [r_path / item["new"] for item in rename_map]
+    if rename_map_callback:
+        rename_map_callback(rename_map, "planned")
 
-    renamed_files = []
-    for index, temp_path in enumerate(temp_files, start=1):
-        target_path = r_path / f"shot{index}.mp4"
-        temp_path.rename(target_path)
-        renamed_files.append(target_path)
+    temp_files = [
+        r_path / f"__hms_tmp_{slug}_{index}_{uuid.uuid4().hex[:8]}.tmp"
+        for index in range(len(video_files))
+    ]
+    target_files = [r_path / item["new"] for item in rename_map]
+    finalized_indexes = set()
+    try:
+        for current, temp_path in zip(video_files, temp_files):
+            current.rename(temp_path)
+        for index, (temp_path, target_path) in enumerate(zip(temp_files, target_files)):
+            temp_path.rename(target_path)
+            finalized_indexes.add(index)
+    except Exception:
+        staged_for_recovery = []
+        try:
+            for index, (original, temp_path, target_path) in enumerate(
+                zip(video_files, temp_files, target_files)
+            ):
+                current = (
+                    target_path
+                    if index in finalized_indexes
+                    else temp_path if temp_path.exists() else original
+                )
+                if not current.exists():
+                    raise RuntimeError(f"Cannot recover renamed render; missing {current}")
+                recovery_path = r_path / f"__hms_recover_{uuid.uuid4().hex}.tmp"
+                current.rename(recovery_path)
+                staged_for_recovery.append((recovery_path, original))
+            for recovery_path, original in staged_for_recovery:
+                recovery_path.rename(original)
+            if rename_map_callback:
+                rename_map_callback(rename_map, "restored")
+        except Exception as recovery_error:
+            raise RuntimeError(
+                "Shot renaming failed and automatic recovery was incomplete; "
+                f"recovery files may remain in {r_path}: {recovery_error}"
+            ) from recovery_error
+        raise
+
+    if rename_map_callback:
+        rename_map_callback(rename_map, "completed")
+    renamed_files = target_files
 
     print(f"[SUCCESS] Confirmed {len(renamed_files)} sequential shots (shot1.mp4 -> shot{len(renamed_files)}.mp4).")
     return renamed_files
@@ -366,11 +424,10 @@ def run_step_1_shot_renamer(renders_dir: str, slug: str) -> list:
 # ==============================================================================
 
 
-def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
+def run_step_2_audio_trimmer(audio_path: str, slug: str, dry_run: bool = False) -> Path:
     """Trims master audio exactly to the configured hook window using SoundFile."""
     print(f"\n[RUN] Step 2: Extracting 24-bit PCM master audio slice using SoundFile backend...")
     output_dir = Path("output").resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
 
     if not hook_file.exists():
@@ -382,6 +439,9 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str) -> Path:
 
     print(f"[INFO] Trimming audio: start = {hook_start_s:.3f}s, duration = {duration_s:.3f}s")
     target_wav = output_dir / f"{slug}_master_audio.wav"
+    if dry_run:
+        print(f"[DRY-RUN] Would create {target_wav}")
+        return target_wav
 
     with sf.SoundFile(str(audio_path), "r") as reader:
         sr = reader.samplerate
@@ -437,7 +497,13 @@ def run_step_3_sync_metadata(slug: str) -> dict:
 # ==============================================================================
 
 
-def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, total_duration: float = 40.0) -> Path:
+def run_step_4_generate_davinci_xml(
+    slug: str,
+    renders_dir: str,
+    fps: int = 24,
+    total_duration: float = 40.0,
+    dry_run: bool = False,
+) -> Path:
     """Generates a valid FCP7-compatible XML timeline using real media metadata."""
     print(f"\n[RUN] Step 4: Assembling Apple FCP 7 XML timeline for '{slug}'...")
     total_duration = _validate_duration(total_duration)
@@ -669,9 +735,143 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
     ET.fromstring(xml_content)
 
     timeline_xml = output_dir / f"{slug}_davinci_timeline.xml"
+    if dry_run:
+        print(f"[DRY-RUN] Would write {timeline_xml}")
+        return timeline_xml
     timeline_xml.write_text(xml_content, encoding="utf-8")
     print(f"[SUCCESS] Timeline XML successfully written to: {timeline_xml.name}")
     return timeline_xml
+
+
+def dry_run_pipeline(
+    audio_path: str,
+    renders_dir: str,
+    slug: str,
+    target_bpm: float = 170.0,
+    duration: float = 40.0,
+) -> None:
+    """Validate and print a pipeline plan without changing source or output files."""
+    audio_file = Path(audio_path).resolve()
+    render_root = Path(renders_dir).resolve()
+    _validate_audio_analysis_size(audio_file)
+    _validate_bpm(target_bpm)
+    duration = _validate_duration(duration)
+    if not render_root.is_dir():
+        raise NotADirectoryError(f"Renders folder does not exist: {render_root}")
+
+    audio_metadata = probe_media(audio_file)
+    if not audio_metadata["has_audio"]:
+        raise ValueError(f"No audio stream found in master audio: {audio_file}")
+
+    extensions = {".mp4", ".mov", ".mkv"}
+    video_files = sorted(
+        (
+            path for path in render_root.iterdir()
+            if path.is_file() and path.suffix.lower() in extensions
+        ),
+        key=lambda path: natural_sort_key(path.name),
+    )
+    if not video_files:
+        raise ValueError(f"No video files ({', '.join(sorted(extensions))}) found in {render_root}")
+
+    output_dir = Path.cwd() / "output"
+    print(f"[DRY-RUN] Track: {slug}; target BPM: {target_bpm:g}; duration: {duration:g}s.")
+    print(f"[DRY-RUN] Master audio: {audio_file.name}.")
+    print(f"[DRY-RUN] Found {len(video_files)} source shot(s):")
+    for index, video_file in enumerate(video_files, start=1):
+        metadata = probe_media(video_file)
+        if not metadata["has_video"]:
+            raise ValueError(f"Render does not contain a video stream: {video_file.name}")
+        target_name = f"shot{index}.mp4"
+        print(
+            f"[DRY-RUN] Rename {video_file.name} -> {target_name}; "
+            f"{metadata['width']}x{metadata['height']} @ {metadata['fps']} fps; "
+            f"embedded audio: {'yes' if metadata['has_audio'] else 'no'}."
+        )
+    for suffix in RollbackStore.OUTPUT_SUFFIXES:
+        destination = output_dir / f"{slug}{suffix}"
+        action = "backup and replace" if destination.exists() else "create"
+        print(f"[DRY-RUN] Would {action} {destination}")
+    print("[DRY-RUN] No files were changed.")
+
+
+def execute_pipeline(
+    audio_path: str,
+    renders_path: str,
+    slug: str,
+    bpm: float = 170.0,
+    duration: float = 40.0,
+    dry_run: bool = False,
+) -> Path | None:
+    if dry_run:
+        dry_run_pipeline(audio_path, renders_path, slug, bpm, duration)
+        return None
+
+    store = RollbackStore()
+    run_id = store.begin_run(slug, audio_path, renders_path)
+    print(f"[INFO] Recovery manifest created: rollback/{run_id}/manifest.json")
+    try:
+        print(f"\nSTARTING HMS MASTER PIPELINE: {slug.upper()} ({run_id})")
+        run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
+        run_step_1_shot_renamer(
+            renders_path,
+            slug,
+            rename_map_callback=lambda mapping, state: store.set_rename_map(
+                run_id, mapping, state
+            ),
+        )
+        run_step_2_audio_trimmer(audio_path, slug)
+        run_step_3_sync_metadata(slug)
+        xml_path = run_step_4_generate_davinci_xml(
+            slug, renders_path, fps=24, total_duration=duration
+        )
+        beats_file = Path.cwd() / "output" / f"{slug}_thebeats.txt"
+        marker_count = sum(bool(line.strip()) for line in beats_file.read_text(encoding="utf-8").splitlines())
+        store.finish_run(run_id, "completed", marker_count=marker_count)
+        print(f"[SUCCESS] COMPLETE PIPELINE FINISHED FOR: {slug}")
+        print(f"[SUCCESS] Run {run_id} recorded; recovery data is in rollback/{run_id}.")
+        print(f"Target XML: {xml_path}")
+        return xml_path
+    except Exception as error:
+        store.finish_run(run_id, "failed", error=str(error))
+        print(f"[ERROR] Run {run_id} failed and is available for rollback.")
+        raise
+
+
+def verify_pipeline_outputs(slug: str, renders_dir: str | None = None, duration: float = 40.0) -> bool:
+    """Check generated files and validate the existing XML without modifying them."""
+    duration = _validate_duration(duration)
+    output_dir = Path.cwd() / "output"
+    required = [
+        output_dir / f"{slug}_hooktimestamp.txt",
+        output_dir / f"{slug}_thebeats.txt",
+        output_dir / f"{slug}_master_audio.wav",
+        output_dir / f"{slug}_davinci_timeline.xml",
+    ]
+    missing = [path for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Verify-only failed; required outputs are missing: "
+            + ", ".join(str(path) for path in missing)
+        )
+    if renders_dir:
+        renders_path = Path(renders_dir).resolve()
+        if not renders_path.is_dir():
+            raise NotADirectoryError(f"Renders folder does not exist: {renders_path}")
+        if not any(path.is_file() for path in renders_path.glob("shot*.mp4")):
+            raise FileNotFoundError(f"No sequenced shot*.mp4 files found in {renders_path}")
+
+    from verify_timeline_xml import verify_davinci_xml
+
+    xml_path = required[-1]
+    if duration != 40.0:
+        raise ValueError("The current timeline verifier requires a 40-second timeline.")
+    if not verify_davinci_xml(str(xml_path)):
+        raise RuntimeError(f"Timeline verification failed: {xml_path}")
+    print(f"[SUCCESS] Existing pipeline outputs verified: {slug}")
+    return True
+    print(f"[SUCCESS] Verify-only passed for '{slug}'. No files were changed.")
+    return True
 
 
 # ==============================================================================
@@ -679,7 +879,7 @@ def run_step_4_generate_davinci_xml(slug: str, renders_dir: str, fps: int = 24, 
 # ==============================================================================
 
 class HMSMasterGUI(tk.Tk):
-    def __init__(self):
+    def __init__(self, dry_run: bool = False):
         super().__init__()
         self.title("Hook Management System (HMS) v3.09 - 337 West Productions")
         self.geometry("960x780")
@@ -749,6 +949,18 @@ class HMSMasterGUI(tk.Tk):
         self.run_all_btn = tk.Button(ctrl_frame, text="RUN COMPLETE PIPELINE (Steps 0 -> 4)", bg=self.accent_color, fg="white", font=("Consolas", 11, "bold"), command=self._start_complete_pipeline)
         self.run_all_btn.pack(fill="x", padx=8, pady=6)
 
+        self.dry_var = tk.BooleanVar(value=dry_run)
+        tk.Checkbutton(
+            ctrl_frame,
+            text="DRY RUN (plan only; do not change files)",
+            variable=self.dry_var,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            selectcolor=self.panel_color,
+            activebackground=self.bg_color,
+            activeforeground=self.fg_color,
+        ).pack(anchor="w", padx=10, pady=(0, 4))
+
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
@@ -757,6 +969,12 @@ class HMSMasterGUI(tk.Tk):
         tk.Button(step_row, text="Step 2 (Trimmer)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(2)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 4 (FCP7 XML)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(4)).pack(side="left", expand=True, fill="x", padx=2)
+
+        recovery_row = tk.Frame(ctrl_frame, bg=self.bg_color)
+        recovery_row.pack(fill="x", padx=8, pady=(0, 6))
+        tk.Button(recovery_row, text="VERIFY ONLY", bg=self.btn_bg, fg=self.fg_color, command=self._verify_only_async).pack(side="left", expand=True, fill="x", padx=2)
+        tk.Button(recovery_row, text="ROLLBACK LAST RUN", bg=self.btn_bg, fg=self.fg_color, command=self._rollback_last_run).pack(side="left", expand=True, fill="x", padx=2)
+        tk.Button(recovery_row, text="RESTORE RUN...", bg=self.btn_bg, fg=self.fg_color, command=self._restore_dialog).pack(side="left", expand=True, fill="x", padx=2)
 
         console_frame = tk.LabelFrame(self, text=" Diagnostic Stream (SafeLogRedirector) ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
         console_frame.pack(fill="both", expand=True, padx=15, pady=(6, 12))
@@ -794,21 +1012,16 @@ class HMSMasterGUI(tk.Tk):
                 print("[ERROR] Please select a master audio file.")
                 return
 
-            print("\n=======================================================")
-            print(f"STARTING HMS MASTER PIPELINE: {slug.upper()}")
-            print("=======================================================")
-
-            run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
-            run_step_1_shot_renamer(renders_path, slug)
-            run_step_2_audio_trimmer(audio_path, slug)
-            run_step_3_sync_metadata(slug)
-            xml_path = run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration)
-
-            print("\n=======================================================")
-            print(f"[SUCCESS] COMPLETE PIPELINE FINISHED FOR: {slug}")
-            print(f"Target XML: {xml_path}")
-            print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
-            print("=======================================================\n")
+            xml_path = execute_pipeline(
+                audio_path,
+                renders_path,
+                slug,
+                bpm,
+                duration,
+                dry_run=self.dry_var.get(),
+            )
+            if xml_path:
+                print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
 
         except Exception as e:
             print(f"[ERROR] Pipeline failed: {str(e)}")
@@ -826,22 +1039,66 @@ class HMSMasterGUI(tk.Tk):
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = _validate_duration(self.duration_var.get().strip())
+            dry_run = self.dry_var.get()
 
             if step_idx == 0:
-                run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
+                run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run)
             elif step_idx == 1:
-                run_step_1_shot_renamer(renders_path, slug)
+                run_step_1_shot_renamer(renders_path, slug, dry_run=dry_run)
             elif step_idx == 2:
-                run_step_2_audio_trimmer(audio_path, slug)
+                run_step_2_audio_trimmer(audio_path, slug, dry_run=dry_run)
             elif step_idx == 3:
                 run_step_3_sync_metadata(slug)
             elif step_idx == 4:
-                run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration)
+                run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration, dry_run=dry_run)
         except Exception as e:
             print(f"[ERROR] Step {step_idx} execution error: {str(e)}")
             print(traceback.format_exc())
 
+    def _verify_only_async(self):
+        threading.Thread(target=self._verify_only_worker, daemon=True).start()
+
+    def _verify_only_worker(self):
+        try:
+            verify_pipeline_outputs(
+                self.slug_var.get().strip(),
+                self.renders_var.get().strip(),
+                float(self.duration_var.get().strip()),
+            )
+        except Exception as error:
+            print(f"[ERROR] Verify-only failed: {error}")
+            print(traceback.format_exc())
+
+    def _rollback_last_run(self):
+        if not messagebox.askyesno("Rollback last run", "Restore the most recent completed or failed run?"):
+            return
+        threading.Thread(target=self._recovery_worker, args=(None,), daemon=True).start()
+
+    def _restore_dialog(self):
+        run_id = simpledialog.askstring("Restore run", "Enter a run ID (for example, run_003):", parent=self)
+        if not run_id:
+            return
+        if not messagebox.askyesno("Restore run", f"Restore {run_id} and undo its renames and outputs?"):
+            return
+        threading.Thread(target=self._recovery_worker, args=(run_id,), daemon=True).start()
+
+    def _recovery_worker(self, run_id):
+        try:
+            store = RollbackStore()
+            manifest = store.rollback_last_run() if run_id is None else store.restore_run(run_id)
+            print(f"[SUCCESS] Restored run {manifest['run_id']}.")
+        except Exception as error:
+            print(f"[ERROR] Restore failed: {error}")
+            print(traceback.format_exc())
+
 
 if __name__ == "__main__":
-    app = HMSMasterGUI()
-    app.mainloop()
+    argument_parser = build_argument_parser()
+    arguments = argument_parser.parse_args()
+    try:
+        handled = dispatch_cli(arguments, gui_factory=HMSMasterGUI)
+    except Exception as error:
+        argument_parser.error(str(error))
+    if not handled:
+        app = HMSMasterGUI(dry_run=arguments.dry_run)
+        app.mainloop()

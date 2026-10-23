@@ -112,3 +112,9 @@ The current HMS v3.09 workflow expects:
 - a correctly generated `output/<slug>_davinci_timeline.xml`
 
 This SOP is the standard import path for resolving the generated timeline safely in DaVinci Resolve Free.
+
+## 9. Run history and recovery
+
+HMS stores each complete or failed pipeline run under `rollback/run_NNN/`, with its manifest, shot rename map, and backups of output files that existed before the run. Use the GUI's **ROLLBACK LAST RUN** or **RESTORE RUN...** controls, or run `python hms_v31_patcher.py --rollback` / `--restore run_NNN`. Restore is safety-checked and stops if required renamed shots or backups are missing, or if restoring an original filename would overwrite another file.
+
+Use the GUI's **DRY RUN** checkbox or run the command with `--dry-run` and explicit audio, renders, and slug arguments to inspect the proposed operations without changing files. **VERIFY ONLY** checks existing output and timeline integrity without rewriting it.

@@ -67,6 +67,8 @@ Upon successful import, your timeline will display the following layout:
 | **Audio Track A2** | Embedded shot audio, when present | Linked and synchronized with its corresponding V1 shot. |
 | **Timeline Markers** | Transient Beat Pins | Blue marker pins embedded at transient positions. |
 
+Each complete pipeline run records a manifest, shot rename map, and backups for overwritten output files under `rollback\run_NNN\`. Use the GUI's rollback/restore controls or run `python hms_v31_patcher.py --rollback` to undo the latest completed or failed run. **DRY RUN** plans work without changing files; **VERIFY ONLY** checks existing outputs.
+
 ---
 
 ## 6. Editorial Polish Workflow
