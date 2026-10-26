@@ -39,6 +39,9 @@ MAX_ANALYSIS_FILE_MB = 512
 # GLOBAL HELPERS
 # ==============================================================================
 
+def _resolve_output_dir(output_dir: str | Path | None = None) -> Path:
+    return Path(output_dir).expanduser().resolve() if output_dir else (Path.cwd() / "output").resolve()
+
 
 def _validate_bpm(bpm_value: float) -> float:
     bpm = float(bpm_value)
@@ -185,6 +188,7 @@ def run_step_0_audio_analysis(
     target_bpm: float = 170.0,
     window_duration: float = 40.0,
     dry_run: bool = False,
+    output_dir: str | Path | None = None,
 ) -> dict:
     """Detects the peak RMS energy 40.0s hook window and tracks beat transients."""
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
@@ -193,7 +197,7 @@ def run_step_0_audio_analysis(
     bpm = _validate_bpm(target_bpm)
     window_duration = _validate_duration(window_duration)
 
-    output_dir = Path("output").resolve()
+    output_dir = _resolve_output_dir(output_dir)
 
     print(f"[INFO] Reading '{audio_file.name}' for RMS sliding-window analysis...")
     y, sr = librosa.load(str(audio_file), sr=22050, mono=True)
@@ -350,10 +354,15 @@ def run_step_1_shot_renamer(
 # ==============================================================================
 
 
-def run_step_2_audio_trimmer(audio_path: str, slug: str, dry_run: bool = False) -> Path:
+def run_step_2_audio_trimmer(
+    audio_path: str,
+    slug: str,
+    dry_run: bool = False,
+    output_dir: str | Path | None = None,
+) -> Path:
     """Trims master audio exactly to the configured hook window using SoundFile."""
     print(f"\n[RUN] Step 2: Extracting 24-bit PCM master audio slice using SoundFile backend...")
-    output_dir = Path("output").resolve()
+    output_dir = _resolve_output_dir(output_dir)
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
 
     if not hook_file.exists():
@@ -398,10 +407,12 @@ def run_step_2_audio_trimmer(audio_path: str, slug: str, dry_run: bool = False) 
 # ==============================================================================
 
 
-def run_step_3_sync_metadata(slug: str) -> dict:
+def run_step_3_sync_metadata(
+    slug: str, output_dir: str | Path | None = None
+) -> dict:
     """Validates output assets and reads cached beat transient timestamps."""
     print(f"\n[RUN] Step 3: Verifying pipeline state and metadata for '{slug}'...")
-    output_dir = Path("output").resolve()
+    output_dir = _resolve_output_dir(output_dir)
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
     beats_file = output_dir / f"{slug}_thebeats.txt"
     audio_wav = output_dir / f"{slug}_master_audio.wav"
@@ -429,12 +440,13 @@ def run_step_4_generate_davinci_xml(
     fps: int = 24,
     total_duration: float = 40.0,
     dry_run: bool = False,
+    output_dir: str | Path | None = None,
 ) -> Path:
     """Generates a valid FCP7-compatible XML timeline using real media metadata."""
     print(f"\n[RUN] Step 4: Assembling Apple FCP 7 XML timeline for '{slug}'...")
     total_duration = _validate_duration(total_duration)
 
-    output_dir = Path("output").resolve()
+    output_dir = _resolve_output_dir(output_dir)
     audio_wav = output_dir / f"{slug}_master_audio.wav"
     beats_file = output_dir / f"{slug}_thebeats.txt"
 
@@ -675,6 +687,7 @@ def dry_run_pipeline(
     slug: str,
     target_bpm: float = 170.0,
     duration: float = 40.0,
+    output_dir: str | Path | None = None,
 ) -> None:
     """Validate and print a pipeline plan without changing source or output files."""
     audio_file = Path(audio_path).resolve()
@@ -700,7 +713,7 @@ def dry_run_pipeline(
     if not video_files:
         raise ValueError(f"No video files ({', '.join(sorted(extensions))}) found in {render_root}")
 
-    output_dir = Path.cwd() / "output"
+    output_dir = _resolve_output_dir(output_dir)
     print(f"[DRY-RUN] Track: {slug}; target BPM: {target_bpm:g}; duration: {duration:g}s.")
     print(f"[DRY-RUN] Master audio: {audio_file.name}.")
     print(f"[DRY-RUN] Found {len(video_files)} source shot(s):")
@@ -728,18 +741,27 @@ def execute_pipeline(
     bpm: float = 170.0,
     duration: float = 40.0,
     dry_run: bool = False,
+    output_dir: str | Path | None = None,
 ) -> Path | None:
+    output_path = _resolve_output_dir(output_dir)
     dry_run = dry_run or is_dry_run()
     if dry_run:
-        dry_run_pipeline(audio_path, renders_path, slug, bpm, duration)
+        dry_run_pipeline(audio_path, renders_path, slug, bpm, duration, output_path)
         return None
 
     store = RollbackStore()
-    run_id = store.begin_run(slug, audio_path, renders_path)
+    run_id = store.begin_run(slug, audio_path, renders_path, output_path)
+    print(f"[INFO] Generated files will be saved in: {output_path}")
     print(f"[INFO] Recovery manifest created: rollback/{run_id}/manifest.json")
     try:
         print(f"\nSTARTING HMS MASTER PIPELINE: {slug.upper()} ({run_id})")
-        run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration)
+        run_step_0_audio_analysis(
+            audio_path,
+            slug,
+            target_bpm=bpm,
+            window_duration=duration,
+            output_dir=output_path,
+        )
         run_step_1_shot_renamer(
             renders_path,
             slug,
@@ -747,12 +769,16 @@ def execute_pipeline(
                 run_id, mapping, state
             ),
         )
-        run_step_2_audio_trimmer(audio_path, slug)
-        run_step_3_sync_metadata(slug)
+        run_step_2_audio_trimmer(audio_path, slug, output_dir=output_path)
+        run_step_3_sync_metadata(slug, output_path)
         xml_path = run_step_4_generate_davinci_xml(
-            slug, renders_path, fps=24, total_duration=duration
+            slug,
+            renders_path,
+            fps=24,
+            total_duration=duration,
+            output_dir=output_path,
         )
-        beats_file = Path.cwd() / "output" / f"{slug}_thebeats.txt"
+        beats_file = output_path / f"{slug}_thebeats.txt"
         marker_count = sum(bool(line.strip()) for line in beats_file.read_text(encoding="utf-8").splitlines())
         store.finish_run(run_id, "completed", marker_count=marker_count)
         print(f"[SUCCESS] COMPLETE PIPELINE FINISHED FOR: {slug}")
@@ -765,10 +791,15 @@ def execute_pipeline(
         raise
 
 
-def verify_pipeline_outputs(slug: str, renders_dir: str | None = None, duration: float = 40.0) -> bool:
+def verify_pipeline_outputs(
+    slug: str,
+    renders_dir: str | None = None,
+    duration: float = 40.0,
+    output_dir: str | Path | None = None,
+) -> bool:
     """Check generated files and validate the existing XML without modifying them."""
     duration = _validate_duration(duration)
-    output_dir = Path.cwd() / "output"
+    output_dir = _resolve_output_dir(output_dir)
     required = [
         output_dir / f"{slug}_hooktimestamp.txt",
         output_dir / f"{slug}_thebeats.txt",
@@ -824,9 +855,12 @@ def cli_bootstrap() -> argparse.Namespace:
 # ==============================================================================
 
 class HMSMasterGUI(tk.Tk):
-    def __init__(self, dry_run: bool = False):
+    def __init__(
+        self, dry_run: bool = False, output_dir: str | Path | None = None
+    ):
         super().__init__()
         self.initial_dry_run = dry_run
+        self.initial_output_dir = _resolve_output_dir(output_dir)
         self.title("Hook Management System (HMS) v3.1 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
@@ -874,8 +908,14 @@ class HMSMasterGUI(tk.Tk):
         self.renders_entry.grid(row=1, column=1, padx=4, pady=4)
         tk.Button(param_frame, text="Browse Folder", command=self._browse_renders, bg=self.btn_bg, fg=self.fg_color).grid(row=1, column=2, padx=6, pady=4)
 
+        tk.Label(param_frame, text="Output Dir:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        self.output_var = tk.StringVar(value=str(self.initial_output_dir))
+        self.output_entry = tk.Entry(param_frame, textvariable=self.output_var, width=65, bg=self.panel_color, fg=self.fg_color, insertbackground=self.fg_color)
+        self.output_entry.grid(row=2, column=1, padx=4, pady=4)
+        tk.Button(param_frame, text="Browse Folder", command=self._browse_output, bg=self.btn_bg, fg=self.fg_color).grid(row=2, column=2, padx=6, pady=4)
+
         meta_subframe = tk.Frame(param_frame, bg=self.bg_color)
-        meta_subframe.grid(row=2, column=0, columnspan=3, sticky="w", padx=8, pady=6)
+        meta_subframe.grid(row=3, column=0, columnspan=3, sticky="w", padx=8, pady=6)
 
         tk.Label(meta_subframe, text="Track Slug:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).pack(side="left")
         self.slug_var = tk.StringVar(value="paper_dolls")
@@ -970,16 +1010,27 @@ class HMSMasterGUI(tk.Tk):
             self.renders_var.set(folder_path)
             print(f"[INFO] Renders directory selected: {folder_path}")
 
+    def _browse_output(self):
+        folder_path = filedialog.askdirectory(
+            initialdir=self.output_var.get() or str(Path.cwd())
+        )
+        if folder_path:
+            self.output_var.set(folder_path)
+            print(f"[INFO] Output directory selected: {folder_path}")
+
     def _start_complete_pipeline(self):
         self.run_all_btn.config(state="disabled")
         dry_run = self.dry_run_var.get()
+        output_dir = self.output_var.get().strip()
         threading.Thread(
             target=self._execute_pipeline_worker,
-            args=(dry_run,),
+            args=(dry_run, output_dir),
             daemon=True,
         ).start()
 
-    def _execute_pipeline_worker(self, dry_run: bool = False):
+    def _execute_pipeline_worker(
+        self, dry_run: bool = False, output_dir: str | None = None
+    ):
         set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
@@ -999,6 +1050,7 @@ class HMSMasterGUI(tk.Tk):
                 bpm,
                 duration,
                 dry_run=dry_run,
+                output_dir=output_dir,
             )
             if xml_path:
                 print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
@@ -1011,13 +1063,16 @@ class HMSMasterGUI(tk.Tk):
 
     def _run_step_async(self, step_idx):
         dry_run = self.dry_run_var.get()
+        output_dir = self.output_var.get().strip()
         threading.Thread(
             target=self._step_worker,
-            args=(step_idx, dry_run),
+            args=(step_idx, dry_run, output_dir),
             daemon=True,
         ).start()
 
-    def _step_worker(self, step_idx, dry_run: bool = False):
+    def _step_worker(
+        self, step_idx, dry_run: bool = False, output_dir: str | None = None
+    ):
         set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()
@@ -1026,28 +1081,40 @@ class HMSMasterGUI(tk.Tk):
             bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = _validate_duration(self.duration_var.get().strip())
             if step_idx == 0:
-                run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run)
+                run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run, output_dir=output_dir)
             elif step_idx == 1:
                 run_step_1_shot_renamer(renders_path, slug, dry_run=dry_run)
             elif step_idx == 2:
-                run_step_2_audio_trimmer(audio_path, slug, dry_run=dry_run)
+                run_step_2_audio_trimmer(audio_path, slug, dry_run=dry_run, output_dir=output_dir)
             elif step_idx == 3:
-                run_step_3_sync_metadata(slug)
+                run_step_3_sync_metadata(slug, output_dir)
             elif step_idx == 4:
-                run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration, dry_run=dry_run)
+                run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration, dry_run=dry_run, output_dir=output_dir)
         except Exception as e:
             print(f"[ERROR] Step {step_idx} execution error: {str(e)}")
             print(traceback.format_exc())
 
     def _verify_only_async(self):
-        threading.Thread(target=self._verify_only_worker, daemon=True).start()
-
-    def _verify_only_worker(self):
-        try:
-            verify_pipeline_outputs(
+        threading.Thread(
+            target=self._verify_only_worker,
+            args=(
                 self.slug_var.get().strip(),
                 self.renders_var.get().strip(),
-                float(self.duration_var.get().strip()),
+                self.duration_var.get().strip(),
+                self.output_var.get().strip(),
+            ),
+            daemon=True,
+        ).start()
+
+    def _verify_only_worker(
+        self, slug: str, renders_dir: str, duration: str, output_dir: str
+    ):
+        try:
+            verify_pipeline_outputs(
+                slug,
+                renders_dir,
+                float(duration),
+                output_dir,
             )
         except Exception as error:
             print(f"[ERROR] Verify-only failed: {error}")
@@ -1099,5 +1166,8 @@ class HMSMasterGUI(tk.Tk):
 
 if __name__ == "__main__":
     arguments = cli_bootstrap()
-    app = HMSMasterGUI(dry_run=arguments.dry_run)
+    app = HMSMasterGUI(
+        dry_run=arguments.dry_run,
+        output_dir=arguments.output_dir,
+    )
     app.mainloop()

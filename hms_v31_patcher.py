@@ -279,6 +279,10 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--audio", help="master audio source path")
     parser.add_argument("--renders", help="directory containing render clips")
+    parser.add_argument(
+        "--output-dir",
+        help="directory for generated outputs (default: ./output)",
+    )
     parser.add_argument("--slug", help="track slug used for output names")
     parser.add_argument("--bpm", type=float, default=170.0)
     parser.add_argument("--duration", type=float, default=40.0)
@@ -298,7 +302,7 @@ def dispatch_cli(args, gui_factory=None):
             "--dry-run cannot be combined with rollback, restore, or verify modes."
         )
     if (args.rollback or args.restore or args.list_runs) and (
-        args.audio or args.renders or args.slug
+        args.audio or args.renders or args.slug or args.output_dir
     ):
         raise ValueError(
             "Rollback, restore, and list-runs cannot be combined with pipeline arguments."
@@ -341,7 +345,9 @@ def dispatch_cli(args, gui_factory=None):
             raise ValueError("--verify-only requires --slug.")
         from hms_master_gui import verify_pipeline_outputs
 
-        verify_pipeline_outputs(args.slug, args.renders, args.duration)
+        verify_pipeline_outputs(
+            args.slug, args.renders, args.duration, args.output_dir
+        )
         return True
     if args.verify:
         print("[INFO] VERIFY mode enabled.")
@@ -363,6 +369,7 @@ def dispatch_cli(args, gui_factory=None):
             args.bpm,
             args.duration,
             dry_run=args.dry_run,
+            output_dir=args.output_dir,
         )
         return True
     return False

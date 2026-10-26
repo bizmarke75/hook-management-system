@@ -5,6 +5,7 @@ All notable changes to the Hook Management System (HMS) project will be document
 ## [v3.1] - 2026-10-23
 
 ### Added
+- Selectable output directory in the GUI and `--output-dir` support for CLI execution and verification.
 - GUI safety controls for dry-run, snapshot history, rollback, and restoring a selected run.
 - CLI bootstrap and run-history commands, including dry-run, verification, rollback, and restore operations.
 - Per-run manifests, rename maps, output backups, and guarded recovery through reusable safety and metadata modules.
