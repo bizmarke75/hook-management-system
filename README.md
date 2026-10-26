@@ -1,6 +1,6 @@
 # Hook Management System (HMS)
 
-Version: v3.11
+Version: v3.12
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -78,6 +78,17 @@ python build_exe.py
 
 This generates a Windows executable in the `dist` directory.
 
+## Installing as a Python package
+
+Install the wheel attached to a GitHub Release with Python 3.10 or later:
+
+```powershell
+python -m pip install .\hook_management_system-3.12.0-py3-none-any.whl
+hms
+```
+
+The Python package includes the HMS GUI and CLI modules. It requires `ffprobe` on `PATH` for media metadata probing. GitHub Releases provide the wheel and source archive; GitHub Packages does not currently provide a PyPI-compatible Python package registry.
+
 ## Run history and recovery
 
 The GUI includes a dry-run checkbox, a verify-only action, and controls to roll back the latest run or restore a specific run. Run manifests, rename maps, and overwritten-output backups are stored under `rollback/`.
@@ -103,8 +114,9 @@ The GitHub Actions workflow in `.github/workflows/build.yml`:
 - install dependencies
 - run the PyInstaller build from `build_exe.py`
 - verify the generated EXE
-- package the portable build
-- upload the archive to a GitHub release when a version tag is pushed
+- package the portable build and create a Windows installer
+- build Python wheel and source distributions
+- upload all packages to a GitHub release when a version tag is pushed
 
 ## DaVinci Resolve SOP
 
@@ -112,7 +124,7 @@ The workflow and configuration details for importing the timeline into DaVinci R
 
 - `docs/DAVINCI_RESOLVE_SOP.md`
 
-The HMS v3.11 XML import has been manually verified in DaVinci Resolve.
+The HMS v3.12 XML import has been manually verified in DaVinci Resolve.
 
 ## Changelog
 

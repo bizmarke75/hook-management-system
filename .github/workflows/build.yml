@@ -30,6 +30,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
+          pip install build
 
       - name: Audit Runtime Environment
         shell: powershell
@@ -58,11 +59,62 @@ jobs:
           $zipOutput = "dist\HMS_${{ github.ref_name }}_Portable.zip"
           Compress-Archive -Path "$distFolder\*" -DestinationPath $zipOutput -Force
 
-      - name: Upload Binary to GitHub Release
+      - name: Build Python Distributions
+        shell: powershell
+        run: |
+          python -m build --sdist --wheel --outdir dist\python
+
+      - name: Install Inno Setup
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: powershell
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build Windows Installer
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: powershell
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Write-Error "[FATAL] Inno Setup compiler not found at $iscc"
+            exit 1
+          }
+          & $iscc "/DAppVersion=$version" "installer\HMS.iss"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Verify Release Packages
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: powershell
+        run: |
+          $requiredFiles = @(
+            "dist\HMS_${{ github.ref_name }}_Portable.zip",
+            "dist\HMS_${{ github.ref_name }}_Setup.exe"
+          )
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path $file)) {
+              Write-Error "[FATAL] Release package missing: $file"
+              exit 1
+            }
+          }
+          if (-not (Get-ChildItem "dist\python" -Filter "*.whl" -File)) {
+            Write-Error "[FATAL] Python wheel was not built."
+            exit 1
+          }
+          if (-not (Get-ChildItem "dist\python" -Filter "*.tar.gz" -File)) {
+            Write-Error "[FATAL] Python source archive was not built."
+            exit 1
+          }
+
+      - name: Upload Release Packages
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/HMS_*_Portable.zip
+          files: |
+            dist/HMS_*_Portable.zip
+            dist/HMS_*_Setup.exe
+            dist/python/*
           name: "Hook Management System ${{ github.ref_name }}"
           draft: false
           prerelease: false

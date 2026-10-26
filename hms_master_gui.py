@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.11
+337 West Productions - Hook Management System (HMS) v3.12
 Module: hms_master_gui.py
 Architecture: Tkinter Dark UI | SoundFile 24-bit Trimmer | Librosa Beat Tracker
 Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
@@ -861,7 +861,7 @@ class HMSMasterGUI(tk.Tk):
         super().__init__()
         self.initial_dry_run = dry_run
         self.initial_output_dir = _resolve_output_dir(output_dir)
-        self.title("Hook Management System (HMS) v3.11 - 337 West Productions")
+        self.title("Hook Management System (HMS) v3.12 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
 
@@ -879,7 +879,7 @@ class HMSMasterGUI(tk.Tk):
             sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
             sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
-        print("[INFO] Hook Management System (HMS) v3.11 initialized.")
+        print("[INFO] Hook Management System (HMS) v3.12 initialized.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
 
     def _setup_styles(self):
@@ -890,7 +890,7 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        header = ttk.Label(self, text="HMS v3.11 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
+        header = ttk.Label(self, text="HMS v3.12 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
@@ -1164,10 +1164,14 @@ class HMSMasterGUI(tk.Tk):
             print(traceback.format_exc())
 
 
-if __name__ == "__main__":
+def main():
     arguments = cli_bootstrap()
     app = HMSMasterGUI(
         dry_run=arguments.dry_run,
         output_dir=arguments.output_dir,
     )
     app.mainloop()
+
+
+if __name__ == "__main__":
+    main()

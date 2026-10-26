@@ -2,6 +2,14 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v3.12] - 2026-10-26
+
+### Added
+- Windows installer and Python wheel/source distributions attached to tagged GitHub releases.
+
+### Changed
+- Updated application, documentation, and build labels for the v3.12 release.
+
 ## [v3.11] - 2026-10-26
 
 ### Added
