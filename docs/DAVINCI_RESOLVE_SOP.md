@@ -17,6 +17,8 @@ Before opening DaVinci Resolve, verify that the HMS pipeline has generated the r
 - `output/<slug>_thebeats.txt` — relative beat transient timestamps
 - `C:\renders\shot1.mp4` through `shotN.mp4` — sequenced render shots
 
+If a custom **Output Dir** is selected in the HMS GUI or supplied with `--output-dir`, use that folder instead of `output/` for the generated timeline, master WAV, and beat files.
+
 ---
 
 ## 2. Project setup and timebase lock

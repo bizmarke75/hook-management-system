@@ -60,7 +60,13 @@ class RollbackStore(ManifestStore):
         "_davinci_timeline.xml",
     )
 
-    def begin_run(self, slug: str, audio_input: str, renders_dir: str) -> str:
+    def begin_run(
+        self,
+        slug: str,
+        audio_input: str,
+        renders_dir: str,
+        output_dir: str | Path | None = None,
+    ) -> str:
         if not slug or Path(slug).name != slug or any(char in slug for char in ("/", "\\")):
             raise ValueError(f"Invalid output slug: {slug!r}")
 
@@ -68,7 +74,7 @@ class RollbackStore(ManifestStore):
         try:
             backup_dir = run_dir / "backups"
             backup_dir.mkdir()
-            output_dir = (self.root_dir / "output").resolve()
+            output_dir = Path(output_dir).resolve() if output_dir else (self.root_dir / "output").resolve()
             backed_up_outputs = []
             for suffix in self.OUTPUT_SUFFIXES:
                 output_path = output_dir / f"{slug}{suffix}"
