@@ -2,6 +2,15 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v3.11] - 2026-10-26
+
+### Added
+- Selectable output directory in the GUI and `--output-dir` CLI support, including verification and recovery backup routing.
+
+### Changed
+- Updated application, documentation, and build labels for the v3.11 release.
+- Automated Windows release builds use Python 3.11.
+
 ## [v3.1] - 2026-10-23
 
 ### Added
