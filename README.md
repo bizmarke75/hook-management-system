@@ -1,6 +1,6 @@
 # Hook Management System (HMS)
 
-Version: v3.1
+Version: v3.11
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -112,7 +112,7 @@ The workflow and configuration details for importing the timeline into DaVinci R
 
 - `docs/DAVINCI_RESOLVE_SOP.md`
 
-The HMS v3.1 XML import has been manually verified in DaVinci Resolve.
+The HMS v3.11 XML import has been manually verified in DaVinci Resolve.
 
 ## Changelog
 

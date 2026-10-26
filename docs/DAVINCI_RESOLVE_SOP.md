@@ -1,7 +1,7 @@
 # 337 West Productions — DaVinci Resolve Free Standard Operating Procedure (SOP)
 
 **Document ID:** SOP-HMS-001
-**Project:** Hook Management System (HMS) v3.1
+**Project:** Hook Management System (HMS) v3.11
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
 **Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
@@ -106,7 +106,7 @@ When editing and color finishing are complete:
 
 ## 8. Runtime expectations
 
-The current HMS v3.1 workflow expects:
+The current HMS v3.11 workflow expects:
 
 - a valid master audio source
 - a render directory with sequential clips
@@ -114,7 +114,7 @@ The current HMS v3.1 workflow expects:
 - a correctly generated `output/<slug>_davinci_timeline.xml`
 
 This SOP is the standard import path for resolving the generated timeline safely in DaVinci Resolve Free.
-The HMS v3.1 FCP 7 XML import has been manually verified in DaVinci Resolve.
+The HMS v3.11 FCP 7 XML import has been manually verified in DaVinci Resolve.
 
 ## 9. Run history and recovery
 
