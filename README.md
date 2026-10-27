@@ -93,11 +93,13 @@ The Python package includes the HMS GUI and CLI modules. It requires `ffprobe` o
 
 The GUI includes a dry-run checkbox, a verify-only action, and controls to roll back the latest run or restore a specific run. Run manifests, rename maps, and overwritten-output backups are stored under `rollback/`.
 Use the GUI's **Output Dir** field to choose where generated hook timestamps, beat markers, WAV audio, and timeline XML are saved. By default, files go to `output/` in the current working directory. Run history and recovery backups remain under the project-level `rollback/` folder.
+Before renaming or building a timeline, specify **Include Clips** with exact filenames or wildcards (comma-separated), for example `shot_2a*, shot_2b*`. HMS will only process matching video clips; **Exclude Clips** provides optional additional filename/glob exclusions. Exact filenames are processed in the order entered, so UUID-named clips can be explicitly ordered. Leave the include field blank and the operation is blocked. The dry-run checkbox is enforced by the pipeline and individual file-writing/renaming steps.
 
 The command-line utility supports recovery and batch execution:
 
 ```powershell
-python hms_v31_patcher.py --dry-run --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --output-dir "D:\HMS\output"
+python hms_v31_patcher.py --dry-run --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*" --exclude "*_final*" --output-dir "D:\HMS\output"
+python hms_v31_patcher.py --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*"
 python hms_v31_patcher.py --verify-only --slug track --renders "C:\renders" --output-dir "D:\HMS\output"
 python hms_v31_patcher.py --rollback
 python hms_v31_patcher.py --restore run_003
@@ -105,7 +107,7 @@ python hms_master_gui.py --list-runs
 python hms_master_gui.py --verify
 ```
 
-To open the GUI with dry-run enabled, use `python hms_master_gui.py --dry-run`; `--verify` prints a verification-mode notice before opening the GUI. `--verify-only --slug track` performs the existing headless output check. A normal CLI pipeline run accepts the same `--audio`, `--renders`, and `--slug` arguments without `--dry-run`. Pass `--output-dir "D:\HMS\output"` to set a custom output folder in CLI or GUI startup; omitting it preserves the `./output` default.
+To open the GUI with dry-run enabled, use `python hms_master_gui.py --dry-run`; `--verify` prints a verification-mode notice before opening the GUI. `--verify-only --slug track` performs the existing headless output check. Pipeline CLI runs require at least one `--include` pattern; repeat it for more patterns and use repeatable `--exclude` options to omit matching files. HMS preserves selected clips' original extensions and leaves all unmatched files unchanged. Pass `--output-dir "D:\HMS\output"` to set a custom output folder in CLI or GUI startup; omitting it preserves the `./output` default.
 
 ## Build and release automation
 

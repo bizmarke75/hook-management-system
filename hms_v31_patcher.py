@@ -280,6 +280,20 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio", help="master audio source path")
     parser.add_argument("--renders", help="directory containing render clips")
     parser.add_argument(
+        "--include",
+        dest="include_patterns",
+        action="append",
+        metavar="GLOB",
+        help="shot filename or glob to include; repeat for multiple patterns (required for pipeline runs)",
+    )
+    parser.add_argument(
+        "--exclude",
+        dest="exclude_patterns",
+        action="append",
+        metavar="GLOB",
+        help="shot filename or glob to exclude; repeat for multiple patterns",
+    )
+    parser.add_argument(
         "--output-dir",
         help="directory for generated outputs (default: ./output)",
     )
@@ -302,12 +316,19 @@ def dispatch_cli(args, gui_factory=None):
             "--dry-run cannot be combined with rollback, restore, or verify modes."
         )
     if (args.rollback or args.restore or args.list_runs) and (
-        args.audio or args.renders or args.slug or args.output_dir
+        args.audio
+        or args.renders
+        or args.slug
+        or args.output_dir
+        or args.include_patterns
+        or args.exclude_patterns
     ):
         raise ValueError(
             "Rollback, restore, and list-runs cannot be combined with pipeline arguments."
         )
-    if args.verify and (args.audio or args.renders or args.slug):
+    if args.verify and (
+        args.audio or args.renders or args.slug or args.include_patterns or args.exclude_patterns
+    ):
         raise ValueError("--verify cannot be combined with pipeline arguments.")
     if args.list_runs:
         from hms_manifest import ManifestStore
@@ -341,6 +362,8 @@ def dispatch_cli(args, gui_factory=None):
     if args.verify_only:
         if args.audio:
             raise ValueError("--verify-only does not accept --audio.")
+        if args.include_patterns or args.exclude_patterns:
+            raise ValueError("--verify-only does not accept clip include/exclude patterns.")
         if not args.slug:
             raise ValueError("--verify-only requires --slug.")
         from hms_master_gui import verify_pipeline_outputs
@@ -352,7 +375,13 @@ def dispatch_cli(args, gui_factory=None):
     if args.verify:
         print("[INFO] VERIFY mode enabled.")
 
-    cli_run_requested = bool(args.audio or args.renders or args.slug)
+    cli_run_requested = bool(
+        args.audio
+        or args.renders
+        or args.slug
+        or args.include_patterns
+        or args.exclude_patterns
+    )
     if args.dry_run or cli_run_requested:
         if not args.audio or not args.renders or not args.slug:
             if args.dry_run and not cli_run_requested and gui_factory is not None:
@@ -370,6 +399,8 @@ def dispatch_cli(args, gui_factory=None):
             args.duration,
             dry_run=args.dry_run,
             output_dir=args.output_dir,
+            include_patterns=args.include_patterns,
+            exclude_patterns=args.exclude_patterns,
         )
         return True
     return False
