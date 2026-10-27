@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "3.12"
+  #define AppVersion "3.13"
 #endif
 
 #define AppName "Hook Management System"

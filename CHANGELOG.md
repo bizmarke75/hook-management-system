@@ -2,12 +2,18 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
-## [Unreleased]
+## [v3.13] - 2026-10-26
 
 ### Fixed
-- Enforce dry-run mode in individual operations so a selected dry run cannot rename clips or write outputs.
-- Require explicit clip include patterns, support exclude patterns, and limit timeline generation to selected clips.
-- Preserve source video extensions and block renames that would overwrite unselected files.
+- Prevent full-pipeline dry runs from entering code that mutates files; dry-run checks are also enforced by individual processing steps.
+- Stop broad render-folder renaming by requiring explicit clip include patterns, with optional exclusions and explicit ordering for UUID-named clips.
+- Keep unselected files untouched, preserve selected clips' source extensions, and block collisions with files outside the selection.
+
+### Added
+- Add regression tests for dry-run safety, render filtering, rename collisions, clip ordering, and pipeline selection.
+
+### Changed
+- Update application and package labels for HMS v3.13.
 
 ## [v3.12] - 2026-10-26
 
