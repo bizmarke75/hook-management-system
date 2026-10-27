@@ -1,6 +1,6 @@
 # Hook Management System (HMS)
 
-Version: v3.12
+Version: v3.13
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -83,7 +83,7 @@ This generates a Windows executable in the `dist` directory.
 Install the wheel attached to a GitHub Release with Python 3.10 or later:
 
 ```powershell
-python -m pip install .\hook_management_system-3.12.0-py3-none-any.whl
+python -m pip install .\hook_management_system-3.13.0-py3-none-any.whl
 hms
 ```
 
@@ -126,7 +126,7 @@ The workflow and configuration details for importing the timeline into DaVinci R
 
 - `docs/DAVINCI_RESOLVE_SOP.md`
 
-The HMS v3.12 XML import has been manually verified in DaVinci Resolve.
+The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
 
 ## Changelog
 
