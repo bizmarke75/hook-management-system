@@ -7,6 +7,7 @@ Standard: modular-python-builder
 """
 
 import argparse
+import fnmatch
 import math
 import os
 import queue
@@ -17,6 +18,7 @@ import time
 import traceback
 import urllib.parse
 import uuid
+from collections.abc import Sequence
 from fractions import Fraction
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -33,6 +35,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 MAX_ANALYSIS_FILE_MB = 512
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
 
 
 # ==============================================================================
@@ -69,6 +72,105 @@ def _validate_audio_analysis_size(audio_file: Path) -> None:
             f"Audio file is too large for in-memory analysis ({file_size_mb:.1f} MB > {MAX_ANALYSIS_FILE_MB} MB). "
             "Use a smaller source or a streaming analysis path in a future release."
         )
+
+
+def parse_file_patterns(value: str) -> list[str]:
+    return [pattern.strip() for pattern in re.split(r"[,;\n]", value) if pattern.strip()]
+
+
+def select_render_files(
+    renders_dir: str | Path,
+    include_patterns: Sequence[str] | None,
+    exclude_patterns: Sequence[str] | None = None,
+) -> list[Path]:
+    render_root = Path(renders_dir).expanduser().resolve()
+    if not render_root.is_dir():
+        raise NotADirectoryError(f"Renders folder does not exist: {render_root}")
+
+    includes = [pattern.strip() for pattern in (include_patterns or ()) if pattern.strip()]
+    excludes = [pattern.strip() for pattern in (exclude_patterns or ()) if pattern.strip()]
+    if not includes:
+        raise ValueError(
+            "Select the intended shot clips with at least one include name or glob "
+            "(for example: shot_2a*, shot_2b*). HMS will not rename every video "
+            "in the folder by default."
+        )
+    if any("/" in pattern or "\\" in pattern for pattern in includes + excludes):
+        raise ValueError("Clip include/exclude patterns must match file names, not paths.")
+
+    candidates = [
+        path for path in render_root.iterdir()
+        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+    ]
+    selected = []
+    seen = set()
+    for pattern in includes:
+        matches = sorted(
+            (
+                path for path in candidates
+                if fnmatch.fnmatchcase(path.name.casefold(), pattern.casefold())
+                and not any(
+                    fnmatch.fnmatchcase(path.name.casefold(), excluded.casefold())
+                    for excluded in excludes
+                )
+            ),
+            key=lambda path: (natural_sort_key(path.name), path.name.casefold()),
+        )
+        for path in matches:
+            identity = str(path).casefold()
+            if identity not in seen:
+                selected.append(path)
+                seen.add(identity)
+    if not selected:
+        raise ValueError(
+            f"No video clips matched include patterns {includes!r} "
+            f"(exclude patterns: {excludes!r}) in {render_root}."
+        )
+    return selected
+
+
+def _validate_selected_render_files(
+    renders_dir: str | Path, selected_files: Sequence[str | Path] | None
+) -> list[Path]:
+    if not selected_files:
+        raise ValueError("No shot clips were selected. Set include patterns before running this step.")
+    render_root = Path(renders_dir).expanduser().resolve()
+    selected = []
+    seen = set()
+    for selected_file in selected_files:
+        path = Path(selected_file).expanduser().resolve()
+        if path.parent != render_root:
+            raise ValueError(f"Selected clip must be directly inside the renders folder: {path}")
+        if path.suffix.lower() not in VIDEO_EXTENSIONS or not path.is_file():
+            raise ValueError(f"Selected clip is missing or has an unsupported format: {path}")
+        identity = str(path).casefold()
+        if identity not in seen:
+            selected.append(path)
+            seen.add(identity)
+    if not selected:
+        raise ValueError("No valid shot clips were selected.")
+    return selected
+
+
+def _build_rename_map(renders_dir: str | Path, video_files: Sequence[Path]) -> list[dict]:
+    render_root = Path(renders_dir).expanduser().resolve()
+    rename_map = [
+        {"original": current.name, "new": f"shot{index}{current.suffix.lower()}"}
+        for index, current in enumerate(video_files, start=1)
+    ]
+    source_paths = {path.resolve() for path in video_files}
+    collisions = [
+        render_root / item["new"]
+        for item in rename_map
+        if (render_root / item["new"]).exists()
+        and (render_root / item["new"]).resolve() not in source_paths
+    ]
+    if collisions:
+        raise FileExistsError(
+            "Shot rename blocked; target names already belong to unselected files: "
+            + ", ".join(str(path) for path in collisions)
+        )
+    return rename_map
 
 
 def _fcpxml_rate(fps_value: str | int | float) -> tuple[int, str, float]:
@@ -191,6 +293,7 @@ def run_step_0_audio_analysis(
     output_dir: str | Path | None = None,
 ) -> dict:
     """Detects the peak RMS energy 40.0s hook window and tracks beat transients."""
+    dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
     _validate_audio_analysis_size(audio_file)
@@ -267,7 +370,10 @@ def run_step_0_audio_analysis(
 
 def natural_sort_key(s):
     """Sorts strings containing numbers in standard human order (shot1, shot2, shot10)."""
-    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', str(s))]
+    return tuple(
+        (1, int(text)) if text.isdigit() else (0, text.casefold())
+        for text in re.split(r"(\d+)", str(s))
+    )
 
 
 def run_step_1_shot_renamer(
@@ -275,26 +381,17 @@ def run_step_1_shot_renamer(
     slug: str,
     dry_run: bool = False,
     rename_map_callback=None,
+    selected_files: Sequence[str | Path] | None = None,
 ) -> list:
     """Renames render clips into a safe, zero-collision shot sequence."""
+    dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 1: Auditing and standardizing render clips in '{renders_dir}'...")
     r_path = Path(renders_dir).resolve()
-    if not r_path.exists():
-        raise FileNotFoundError(f"Renders folder does not exist: {r_path}")
+    video_files = _validate_selected_render_files(r_path, selected_files)
+    print(f"[INFO] Selected {len(video_files)} shot clip(s); other files will be left untouched.")
 
-    extensions = {".mp4", ".mov", ".mkv"}
-    video_files = [f for f in r_path.iterdir() if f.is_file() and f.suffix.lower() in extensions]
-
-    if not video_files:
-        raise ValueError(f"No video files ({', '.join(extensions)}) found in {r_path}")
-
-    video_files.sort(key=lambda p: natural_sort_key(p.name))
-    print(f"[INFO] Discovered {len(video_files)} video assets in renders directory.")
-
-    rename_map = [
-        {"original": current.name, "new": f"shot{index}.mp4"}
-        for index, current in enumerate(video_files, start=1)
-    ]
+    rename_map = _build_rename_map(r_path, video_files)
+    target_files = [r_path / item["new"] for item in rename_map]
     if dry_run:
         for item in rename_map:
             print(f"[DRY-RUN] Rename {item['original']} -> {item['new']}")
@@ -306,7 +403,6 @@ def run_step_1_shot_renamer(
         r_path / f"__hms_tmp_{slug}_{index}_{uuid.uuid4().hex[:8]}.tmp"
         for index in range(len(video_files))
     ]
-    target_files = [r_path / item["new"] for item in rename_map]
     finalized_indexes = set()
     try:
         for current, temp_path in zip(video_files, temp_files):
@@ -345,7 +441,7 @@ def run_step_1_shot_renamer(
         rename_map_callback(rename_map, "completed")
     renamed_files = target_files
 
-    print(f"[SUCCESS] Confirmed {len(renamed_files)} sequential shots (shot1.mp4 -> shot{len(renamed_files)}.mp4).")
+    print(f"[SUCCESS] Confirmed {len(renamed_files)} sequential shot clips.")
     return renamed_files
 
 
@@ -361,6 +457,7 @@ def run_step_2_audio_trimmer(
     output_dir: str | Path | None = None,
 ) -> Path:
     """Trims master audio exactly to the configured hook window using SoundFile."""
+    dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 2: Extracting 24-bit PCM master audio slice using SoundFile backend...")
     output_dir = _resolve_output_dir(output_dir)
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
@@ -441,8 +538,10 @@ def run_step_4_generate_davinci_xml(
     total_duration: float = 40.0,
     dry_run: bool = False,
     output_dir: str | Path | None = None,
+    selected_files: Sequence[str | Path] | None = None,
 ) -> Path:
     """Generates a valid FCP7-compatible XML timeline using real media metadata."""
+    dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 4: Assembling Apple FCP 7 XML timeline for '{slug}'...")
     total_duration = _validate_duration(total_duration)
 
@@ -466,11 +565,7 @@ def run_step_4_generate_davinci_xml(
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
 
     r_path = Path(renders_dir).resolve()
-    video_files = [f for f in r_path.iterdir() if f.is_file() and f.suffix.lower() == ".mp4"]
-    video_files.sort(key=lambda p: natural_sort_key(p.name))
-
-    if not video_files:
-        raise ValueError(f"No video files found in {r_path}")
+    video_files = _validate_selected_render_files(r_path, selected_files)
 
     video_metadata = [probe_media(video_file) for video_file in video_files]
     for video_file, metadata in zip(video_files, video_metadata):
@@ -688,6 +783,8 @@ def dry_run_pipeline(
     target_bpm: float = 170.0,
     duration: float = 40.0,
     output_dir: str | Path | None = None,
+    include_patterns: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> None:
     """Validate and print a pipeline plan without changing source or output files."""
     audio_file = Path(audio_path).resolve()
@@ -695,23 +792,12 @@ def dry_run_pipeline(
     _validate_audio_analysis_size(audio_file)
     _validate_bpm(target_bpm)
     duration = _validate_duration(duration)
-    if not render_root.is_dir():
-        raise NotADirectoryError(f"Renders folder does not exist: {render_root}")
+    video_files = select_render_files(render_root, include_patterns, exclude_patterns)
+    rename_map = _build_rename_map(render_root, video_files)
 
     audio_metadata = probe_media(audio_file)
     if not audio_metadata["has_audio"]:
         raise ValueError(f"No audio stream found in master audio: {audio_file}")
-
-    extensions = {".mp4", ".mov", ".mkv"}
-    video_files = sorted(
-        (
-            path for path in render_root.iterdir()
-            if path.is_file() and path.suffix.lower() in extensions
-        ),
-        key=lambda path: natural_sort_key(path.name),
-    )
-    if not video_files:
-        raise ValueError(f"No video files ({', '.join(sorted(extensions))}) found in {render_root}")
 
     output_dir = _resolve_output_dir(output_dir)
     print(f"[DRY-RUN] Track: {slug}; target BPM: {target_bpm:g}; duration: {duration:g}s.")
@@ -721,7 +807,7 @@ def dry_run_pipeline(
         metadata = probe_media(video_file)
         if not metadata["has_video"]:
             raise ValueError(f"Render does not contain a video stream: {video_file.name}")
-        target_name = f"shot{index}.mp4"
+        target_name = rename_map[index - 1]["new"]
         print(
             f"[DRY-RUN] Rename {video_file.name} -> {target_name}; "
             f"{metadata['width']}x{metadata['height']} @ {metadata['fps']} fps; "
@@ -742,13 +828,26 @@ def execute_pipeline(
     duration: float = 40.0,
     dry_run: bool = False,
     output_dir: str | Path | None = None,
+    include_patterns: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> Path | None:
     output_path = _resolve_output_dir(output_dir)
     dry_run = dry_run or is_dry_run()
     if dry_run:
-        dry_run_pipeline(audio_path, renders_path, slug, bpm, duration, output_path)
+        dry_run_pipeline(
+            audio_path,
+            renders_path,
+            slug,
+            bpm,
+            duration,
+            output_path,
+            include_patterns,
+            exclude_patterns,
+        )
         return None
 
+    selected_files = select_render_files(renders_path, include_patterns, exclude_patterns)
+    _build_rename_map(renders_path, selected_files)
     store = RollbackStore()
     run_id = store.begin_run(slug, audio_path, renders_path, output_path)
     print(f"[INFO] Generated files will be saved in: {output_path}")
@@ -762,12 +861,13 @@ def execute_pipeline(
             window_duration=duration,
             output_dir=output_path,
         )
-        run_step_1_shot_renamer(
+        renamed_files = run_step_1_shot_renamer(
             renders_path,
             slug,
             rename_map_callback=lambda mapping, state: store.set_rename_map(
                 run_id, mapping, state
             ),
+            selected_files=selected_files,
         )
         run_step_2_audio_trimmer(audio_path, slug, output_dir=output_path)
         run_step_3_sync_metadata(slug, output_path)
@@ -777,6 +877,7 @@ def execute_pipeline(
             fps=24,
             total_duration=duration,
             output_dir=output_path,
+            selected_files=renamed_files,
         )
         beats_file = output_path / f"{slug}_thebeats.txt"
         marker_count = sum(bool(line.strip()) for line in beats_file.read_text(encoding="utf-8").splitlines())
@@ -816,8 +917,13 @@ def verify_pipeline_outputs(
         renders_path = Path(renders_dir).resolve()
         if not renders_path.is_dir():
             raise NotADirectoryError(f"Renders folder does not exist: {renders_path}")
-        if not any(path.is_file() for path in renders_path.glob("shot*.mp4")):
-            raise FileNotFoundError(f"No sequenced shot*.mp4 files found in {renders_path}")
+        if not any(
+            path.is_file()
+            and path.suffix.lower() in VIDEO_EXTENSIONS
+            and path.name.casefold().startswith("shot")
+            for path in renders_path.iterdir()
+        ):
+            raise FileNotFoundError(f"No sequenced shot clips found in {renders_path}")
 
     from hms_v31_patcher import verify_davinci_xml
 
@@ -914,8 +1020,56 @@ class HMSMasterGUI(tk.Tk):
         self.output_entry.grid(row=2, column=1, padx=4, pady=4)
         tk.Button(param_frame, text="Browse Folder", command=self._browse_output, bg=self.btn_bg, fg=self.fg_color).grid(row=2, column=2, padx=6, pady=4)
 
+        tk.Label(
+            param_frame,
+            text="Include Clips:",
+            bg=self.bg_color,
+            fg=self.fg_color,
+            font=("Consolas", 9),
+        ).grid(row=3, column=0, sticky="w", padx=8, pady=4)
+        self.include_var = tk.StringVar(value="")
+        tk.Entry(
+            param_frame,
+            textvariable=self.include_var,
+            width=65,
+            bg=self.panel_color,
+            fg=self.fg_color,
+            insertbackground=self.fg_color,
+        ).grid(row=3, column=1, padx=4, pady=4)
+        tk.Label(
+            param_frame,
+            text="Required; names/globs separated by commas",
+            bg=self.bg_color,
+            fg="#aaaaaa",
+            font=("Consolas", 8),
+        ).grid(row=3, column=2, sticky="w", padx=6, pady=4)
+
+        tk.Label(
+            param_frame,
+            text="Exclude Clips:",
+            bg=self.bg_color,
+            fg=self.fg_color,
+            font=("Consolas", 9),
+        ).grid(row=4, column=0, sticky="w", padx=8, pady=4)
+        self.exclude_var = tk.StringVar(value="")
+        tk.Entry(
+            param_frame,
+            textvariable=self.exclude_var,
+            width=65,
+            bg=self.panel_color,
+            fg=self.fg_color,
+            insertbackground=self.fg_color,
+        ).grid(row=4, column=1, padx=4, pady=4)
+        tk.Label(
+            param_frame,
+            text="Optional; excluded files are never renamed",
+            bg=self.bg_color,
+            fg="#aaaaaa",
+            font=("Consolas", 8),
+        ).grid(row=4, column=2, sticky="w", padx=6, pady=4)
+
         meta_subframe = tk.Frame(param_frame, bg=self.bg_color)
-        meta_subframe.grid(row=3, column=0, columnspan=3, sticky="w", padx=8, pady=6)
+        meta_subframe.grid(row=5, column=0, columnspan=3, sticky="w", padx=8, pady=6)
 
         tk.Label(meta_subframe, text="Track Slug:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).pack(side="left")
         self.slug_var = tk.StringVar(value="paper_dolls")
@@ -1022,14 +1176,20 @@ class HMSMasterGUI(tk.Tk):
         self.run_all_btn.config(state="disabled")
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
+        include_patterns = parse_file_patterns(self.include_var.get())
+        exclude_patterns = parse_file_patterns(self.exclude_var.get())
         threading.Thread(
             target=self._execute_pipeline_worker,
-            args=(dry_run, output_dir),
+            args=(dry_run, output_dir, include_patterns, exclude_patterns),
             daemon=True,
         ).start()
 
     def _execute_pipeline_worker(
-        self, dry_run: bool = False, output_dir: str | None = None
+        self,
+        dry_run: bool = False,
+        output_dir: str | None = None,
+        include_patterns: Sequence[str] | None = None,
+        exclude_patterns: Sequence[str] | None = None,
     ):
         set_dry_run(dry_run)
         try:
@@ -1051,6 +1211,8 @@ class HMSMasterGUI(tk.Tk):
                 duration,
                 dry_run=dry_run,
                 output_dir=output_dir,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
             )
             if xml_path:
                 print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
@@ -1064,14 +1226,21 @@ class HMSMasterGUI(tk.Tk):
     def _run_step_async(self, step_idx):
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
+        include_patterns = parse_file_patterns(self.include_var.get())
+        exclude_patterns = parse_file_patterns(self.exclude_var.get())
         threading.Thread(
             target=self._step_worker,
-            args=(step_idx, dry_run, output_dir),
+            args=(step_idx, dry_run, output_dir, include_patterns, exclude_patterns),
             daemon=True,
         ).start()
 
     def _step_worker(
-        self, step_idx, dry_run: bool = False, output_dir: str | None = None
+        self,
+        step_idx,
+        dry_run: bool = False,
+        output_dir: str | None = None,
+        include_patterns: Sequence[str] | None = None,
+        exclude_patterns: Sequence[str] | None = None,
     ):
         set_dry_run(dry_run)
         try:
@@ -1083,13 +1252,32 @@ class HMSMasterGUI(tk.Tk):
             if step_idx == 0:
                 run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run, output_dir=output_dir)
             elif step_idx == 1:
-                run_step_1_shot_renamer(renders_path, slug, dry_run=dry_run)
+                selected_files = select_render_files(
+                    renders_path, include_patterns, exclude_patterns
+                )
+                run_step_1_shot_renamer(
+                    renders_path,
+                    slug,
+                    dry_run=dry_run,
+                    selected_files=selected_files,
+                )
             elif step_idx == 2:
                 run_step_2_audio_trimmer(audio_path, slug, dry_run=dry_run, output_dir=output_dir)
             elif step_idx == 3:
                 run_step_3_sync_metadata(slug, output_dir)
             elif step_idx == 4:
-                run_step_4_generate_davinci_xml(slug, renders_path, fps=24, total_duration=duration, dry_run=dry_run, output_dir=output_dir)
+                selected_files = select_render_files(
+                    renders_path, include_patterns, exclude_patterns
+                )
+                run_step_4_generate_davinci_xml(
+                    slug,
+                    renders_path,
+                    fps=24,
+                    total_duration=duration,
+                    dry_run=dry_run,
+                    output_dir=output_dir,
+                    selected_files=selected_files,
+                )
         except Exception as e:
             print(f"[ERROR] Step {step_idx} execution error: {str(e)}")
             print(traceback.format_exc())
