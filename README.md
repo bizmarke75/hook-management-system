@@ -27,7 +27,8 @@ hook-management-system/
 ├── README.md
 ├── CHANGELOG.md
 ├── docs/
-│   └── DAVINCI_RESOLVE_SOP.md
+│   ├── DAVINCI_RESOLVE_SOP.md
+│   └── EDITOR_ONBOARDING.md
 ├── .github/
 │   └── workflows/
 │       └── build.yml
@@ -111,22 +112,25 @@ To open the GUI with dry-run enabled, use `python hms_master_gui.py --dry-run`; 
 
 ## Build and release automation
 
-The GitHub Actions workflow in `.github/workflows/build.yml`:
+The GitHub Actions workflow in `.github/workflows/build.yml` is a release-focused validation and packaging pipeline. It:
 
-- install dependencies
-- run the PyInstaller build from `build_exe.py`
-- verify the generated EXE
-- package the portable build and create a Windows installer
-- build Python wheel and source distributions
-- upload all packages to a GitHub release when a version tag is pushed
+- installs the project dependencies
+- runs the Windows PyInstaller build from `build_exe.py`
+- checks that the generated EXE is present
+- creates the portable ZIP package and Windows installer for tagged releases
+- builds the Python wheel and source distribution
+- uploads all release artifacts to GitHub when a version tag is pushed
 
-## DaVinci Resolve SOP
+Use this workflow as the release gate for packaged builds. Confirm the local Resolve import path, rollback workflow, and dry-run validation before treating a new tag as production-ready.
 
-The workflow and configuration details for importing the timeline into DaVinci Resolve are documented in:
+## Documentation
 
-- `docs/DAVINCI_RESOLVE_SOP.md`
+Start here for the day-to-day production flow:
 
-The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
+- [`docs/DAVINCI_RESOLVE_SOP.md`](docs/DAVINCI_RESOLVE_SOP.md) — concise operator runbook for HMS execution, Resolve import, verification, recovery, and final export
+- [`docs/EDITOR_ONBOARDING.md`](docs/EDITOR_ONBOARDING.md) — onboarding guide for new editors/operators
+
+The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12; v3.13 verification is not documented. The tag-triggered workflow publishes a release directly and does not run regression tests or smoke-test the packaged outputs. Complete the runbook's **Release verification checklist** against the candidate before creating a release tag.
 
 ## Changelog
 
