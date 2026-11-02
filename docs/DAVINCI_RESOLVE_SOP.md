@@ -170,7 +170,7 @@ Before creating a release tag, close these validation gaps against the exact can
 - Install and import the built wheel; inspect the portable ZIP and installer contents and confirm version labels match the tag.
 - Exercise include/exclude ordering and a custom output directory with representative media.
 - Complete a restore drill using a disposable run with both pre-existing output files and renamed clips; confirm the restore returns each item to its prior state.
-- Confirm `rollback/` remains outside the working tree and test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
+- Keep the working-directory `rollback/` folder available for recovery, but exclude it from source and release artifacts; test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
 - Import the generated XML and relink media in the current production Resolve version before release approval.
 
 These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.13. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
