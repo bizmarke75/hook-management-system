@@ -2,6 +2,22 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v3.15] - 2026-11-03
+
+### Added
+- Select render clips directly from the chosen renders folder to populate the include list; retain optional exclude patterns.
+
+### Fixed
+- Mute embedded render audio in generated Resolve timelines while keeping the trimmed master WAV linked on A1, avoiding broken embedded-audio clip references.
+- Estimate Target BPM from each newly selected master WAV instead of carrying a previous track's value, and block BPM-dependent runs until estimation completes.
+- Name trimmed master audio `<slug>_master_trimmed.wav` consistently in generated timelines, validation, and recovery manifests.
+- Keep verify and restore compatible with existing `<slug>_master_audio.wav` outputs and recovery manifests.
+- Strip recognized trailing master/trimmed suffixes from selected audio names to avoid duplicate segments in output filenames.
+
+### Changed
+- Update application and package labels for HMS v3.15.
+- Update the Resolve workflow documentation for direct clip selection and muted embedded audio.
+
 ## [v3.14] - 2026-11-03
 
 ### Fixed

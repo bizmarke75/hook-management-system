@@ -31,8 +31,8 @@ pip install -r requirements.txt
 python hms_master_gui.py
 ```
 
-4. Pick the master audio file and render directory.
-5. Define the include patterns for the exact shots you want processed.
+4. Pick the master audio file and render directory; select the intended clips in the file picker that opens.
+5. Use **Choose Files** to revise the clip selection, or type filenames/globs in **Include Clips**. Add excludes only if needed.
 6. Set `--output-dir` or the GUI output folder if you are not writing to the default `output/` path.
 7. Start with **Dry Run** enabled.
 8. Review the planned selection and order. If correct, disable **Dry Run** and run the pipeline again to write outputs.
@@ -40,7 +40,7 @@ python hms_master_gui.py
 ## 3. Safe execution habits
 
 - Do not leave the include list blank.
-- Use explicit include patterns for the final shot set.
+- Select only the final shot set in the include picker or enter explicit include patterns.
 - Exact filenames are processed in the order entered; unmatched files remain untouched.
 - Use exclude patterns only when you need to skip a known subset.
 - Run a dry run before a production pass whenever you are changing shot order or using a new output folder.

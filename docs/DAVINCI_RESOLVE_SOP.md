@@ -1,7 +1,7 @@
 # 337 West Productions — HMS Operator Runbook
 
 **Document ID:** SOP-HMS-001
-**Project:** Hook Management System (HMS) v3.14
+**Project:** Hook Management System (HMS) v3.15
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 10/11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
 **Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
@@ -23,7 +23,7 @@ This runbook covers the daily production workflow: set up the project, run HMS, 
 
 Before opening Resolve, confirm that HMS generated the expected files in the selected output folder:
 
-- `<slug>_davinci_timeline.xml` — FCP 7 XML sequence file
+- `<slug>_davinci_timeline.xml` — Final Cut Pro 7 interchange XML (`xmeml` v5), imported into Resolve as a timeline
 - `<slug>_master_trimmed.wav` — trimmed 24-bit PCM WAV for the hook window
 - `<slug>_thebeats.txt` — transient beat timestamps
 - `shot1` through `shotN` — the final ordered render clips, retaining their source extensions
@@ -32,8 +32,8 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 
 ### Project and file safety checks
 
+- Choose the intended video clips from the file picker after selecting the render directory, or use **Choose Files** to revise the selection.
 - Confirm the include list is not blank; HMS blocks blank include patterns before generating or renaming output.
-- Set explicit include patterns for the intended clips (for example `shot_2a*, shot_2b*`).
 - Use `--exclude` or **Exclude Clips** for optional filename patterns that should be skipped.
 - Use **DRY RUN** or `--dry-run` before a production run when you are validating selection or ordering.
 
@@ -46,8 +46,8 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 1. Open `hms_master_gui.py`.
 2. Select the master audio file and render directory.
 3. Set the output folder if needed.
-4. Add the exact include patterns or wildcard filters for the shots to process.
-5. Add optional exclude patterns if some clips should be ignored.
+4. Choose the exact shot files in the picker that opens after selecting the render directory; use **Choose Files** to revise the selection. You may instead type filenames or wildcard patterns in **Include Clips**.
+5. Add optional exclude patterns if some selected clips should be ignored.
 6. Run with **Dry Run** enabled to preview the planned operations; review the log and selection.
 7. When the preview is correct, disable **Dry Run**, run again, and review the log output.
 
@@ -130,7 +130,7 @@ Use the Edit page and confirm all of the following:
 
 - [ ] Timeline ruler ends at `00:00:40:00` (960 frames)
 - [ ] Audio begins at frame 0 and matches the trimmed master WAV
-- [ ] Master audio sits on A1; any embedded render audio is linked to the video clip on A2
+- [ ] Trimmed master audio sits on A1; embedded render audio is muted and no shot-audio clips appear on A2
 - [ ] Shots appear in order from `shot1` to `shotN` with no black filler gaps
 - [ ] Blue marker pins span the full hook window and align with transient peaks
 - [ ] Sequence name and revision metadata are visible in the XML root and clip metadata
@@ -161,7 +161,7 @@ Add to the render queue and render all.
 
 ## 8. Release verification checklist
 
-The current tag-triggered GitHub Actions workflow builds the executable, portable ZIP, installer, wheel, and source archive and checks that expected files exist. It does not run repository regression tests, launch the packaged executable, smoke-test the wheel install path, or import a generated timeline into Resolve. The workflow publishes a non-draft release directly from a version tag; it does not provide a staged candidate review.
+The current tag-triggered GitHub Actions workflow runs repository regression tests, builds the executable, portable ZIP, installer, wheel, and source archive, and checks that expected files exist. It does not launch the packaged executable, smoke-test the wheel install path, or import a generated timeline into Resolve. The workflow publishes a non-draft release directly from a version tag; it does not provide a staged candidate review.
 
 Before creating a release tag, close these validation gaps against the exact candidate commit and artifacts:
 
@@ -173,6 +173,6 @@ Before creating a release tag, close these validation gaps against the exact can
 - Keep the working-directory `rollback/` folder available for recovery, but exclude it from source and release artifacts; test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
 - Import the generated XML and relink media in the current production Resolve version before release approval.
 
-These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.14. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
+These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.15. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
 
 ---

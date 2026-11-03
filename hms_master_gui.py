@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.14
+337 West Productions - Hook Management System (HMS) v3.15
 Module: hms_master_gui.py
 Architecture: Tkinter Dark UI | SoundFile 24-bit Trimmer | Librosa Beat Tracker
 Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
@@ -649,7 +649,6 @@ def run_step_4_generate_davinci_xml(
     ET.SubElement(track, "enabled").text = "TRUE"
     ET.SubElement(track, "locked").text = "FALSE"
     current_frame = 0
-    shot_clips = []
 
     for idx, (v_file, video_meta) in enumerate(zip(video_files, video_metadata)):
         clip_dur = frame_alloc[idx]
@@ -663,7 +662,6 @@ def run_step_4_generate_davinci_xml(
         source_clip_frames = max(1, int(round((clip_dur / fps) * actual_source_fps)))
         file_url = _file_path_url(v_file)
         video_clip_id = f"video-{idx + 1}"
-        audio_clip_id = f"audio-{idx + 1}" if video_meta["has_audio"] else None
         file_id = f"file-shot-{idx + 1}"
 
         clip_item = ET.SubElement(track, "clipitem", {"id": video_clip_id})
@@ -703,18 +701,7 @@ def run_step_4_generate_davinci_xml(
         print(
             f"[INFO] {v_file.name}: {video_meta['width']}x{video_meta['height']} "
             f"@ {video_meta['fps']} fps; embedded audio: "
-            f"{'yes' if video_meta['has_audio'] else 'no'}."
-        )
-        shot_clips.append(
-            {
-                "video_id": video_clip_id,
-                "audio_id": audio_clip_id,
-                "file_id": file_id,
-                "file_name": v_file.name,
-                "metadata": video_meta,
-                "timeline_start": start_frame,
-                "timeline_duration": clip_dur,
-            }
+            f"{'muted' if video_meta['has_audio'] else 'none'}."
         )
 
     audio_track = ET.SubElement(media, "audio")
@@ -752,51 +739,6 @@ def run_step_4_generate_davinci_xml(
     source_track = ET.SubElement(audio_clip_item, "sourcetrack")
     ET.SubElement(source_track, "mediatype").text = "audio"
     ET.SubElement(source_track, "trackindex").text = "1"
-
-    shot_audio_clips = [clip for clip in shot_clips if clip["audio_id"]]
-    if shot_audio_clips:
-        shot_audio_track = ET.SubElement(audio_track, "track")
-        ET.SubElement(shot_audio_track, "enabled").text = "TRUE"
-        ET.SubElement(shot_audio_track, "locked").text = "FALSE"
-        ET.SubElement(shot_audio_track, "outputchannelindex").text = "1"
-
-        for audio_index, clip in enumerate(shot_audio_clips, start=1):
-            metadata = clip["metadata"]
-            audio_duration = metadata["audio_duration"] or metadata["duration"]
-            if audio_duration <= 0:
-                raise ValueError(
-                    f"Could not determine embedded audio duration for {clip['file_name']}."
-                )
-            audio_clip_frames = min(
-                clip["timeline_duration"],
-                max(1, int(round(audio_duration * fps))),
-            )
-
-            audio_item = ET.SubElement(
-                shot_audio_track, "clipitem", {"id": clip["audio_id"]}
-            )
-            ET.SubElement(audio_item, "name").text = clip["file_name"]
-            ET.SubElement(audio_item, "enabled").text = "TRUE"
-            ET.SubElement(audio_item, "duration").text = str(audio_clip_frames)
-            _append_rate(audio_item, fps)
-            ET.SubElement(audio_item, "in").text = "0"
-            ET.SubElement(audio_item, "out").text = str(audio_clip_frames)
-            ET.SubElement(audio_item, "start").text = str(clip["timeline_start"])
-            ET.SubElement(audio_item, "end").text = str(
-                clip["timeline_start"] + audio_clip_frames
-            )
-            ET.SubElement(audio_item, "file", {"id": clip["file_id"]})
-            source_track = ET.SubElement(audio_item, "sourcetrack")
-            ET.SubElement(source_track, "mediatype").text = "audio"
-            ET.SubElement(source_track, "trackindex").text = "1"
-
-            video_index = int(clip["video_id"].rsplit("-", 1)[1])
-            _append_clip_link(audio_item, clip["video_id"], "video", 1, video_index)
-            _append_clip_link(audio_item, clip["audio_id"], "audio", 2, audio_index)
-            video_item = track.find(f"clipitem[@id='{clip['video_id']}']")
-            if video_item is None:
-                raise RuntimeError(f"Missing generated video clip item: {clip['video_id']}")
-            _append_clip_link(video_item, clip["audio_id"], "audio", 2, audio_index)
 
     xml_bytes = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     xml_content = xml_bytes.decode("utf-8")
@@ -1010,7 +952,7 @@ class HMSMasterGUI(tk.Tk):
         self._audio_selection_generation = 0
         self._bpm_estimation_pending = False
         self._pipeline_running = False
-        self.title("Hook Management System (HMS) v3.14 - 337 West Productions")
+        self.title("Hook Management System (HMS) v3.15 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
 
@@ -1028,7 +970,7 @@ class HMSMasterGUI(tk.Tk):
             sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
             sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
-        print("[INFO] Hook Management System (HMS) v3.14 initialized.")
+        print("[INFO] Hook Management System (HMS) v3.15 initialized.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
 
     def _setup_styles(self):
@@ -1039,7 +981,7 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        header = ttk.Label(self, text="HMS v3.14 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
+        header = ttk.Label(self, text="HMS v3.15 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
@@ -1079,12 +1021,12 @@ class HMSMasterGUI(tk.Tk):
             fg=self.fg_color,
             insertbackground=self.fg_color,
         ).grid(row=3, column=1, padx=4, pady=4)
-        tk.Label(
+        tk.Button(
             param_frame,
-            text="Required; names/globs separated by commas",
-            bg=self.bg_color,
-            fg="#aaaaaa",
-            font=("Consolas", 8),
+            text="Choose Files",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=self._choose_render_clips,
         ).grid(row=3, column=2, sticky="w", padx=6, pady=4)
 
         tk.Label(
@@ -1283,10 +1225,54 @@ class HMSMasterGUI(tk.Tk):
             step_0_btn.config(state="disabled" if estimating else "normal")
 
     def _browse_renders(self):
-        folder_path = filedialog.askdirectory()
+        folder_path = filedialog.askdirectory(
+            initialdir=self.renders_var.get() or str(Path.cwd())
+        )
         if folder_path:
-            self.renders_var.set(folder_path)
-            print(f"[INFO] Renders directory selected: {folder_path}")
+            render_root = Path(folder_path).expanduser().resolve()
+            self.renders_var.set(str(render_root))
+            self.include_var.set("")
+            print(f"[INFO] Renders directory selected: {render_root}")
+            self._choose_render_clips(render_root)
+
+    def _choose_render_clips(self, renders_dir: str | Path | None = None) -> None:
+        render_root = Path(
+            renders_dir or self.renders_var.get().strip()
+        ).expanduser().resolve()
+        if not render_root.is_dir():
+            print(f"[ERROR] Renders folder does not exist: {render_root}")
+            return
+        selected_paths = filedialog.askopenfilenames(
+            title="Select video clips to include",
+            initialdir=str(render_root),
+            filetypes=[
+                ("Video clips", "*.mp4 *.mov *.mkv"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not selected_paths:
+            return
+
+        selected_files = [Path(path).expanduser().resolve() for path in selected_paths]
+        invalid_files = [
+            path
+            for path in selected_files
+            if path.parent != render_root
+            or path.suffix.lower() not in VIDEO_EXTENSIONS
+            or not path.is_file()
+        ]
+        if invalid_files:
+            print(
+                "[ERROR] Select only video files directly inside the chosen renders folder: "
+                + ", ".join(str(path) for path in invalid_files)
+            )
+            return
+
+        self.include_var.set(", ".join(path.name for path in selected_files))
+        print(
+            f"[INFO] Selected {len(selected_files)} render clip(s) for inclusion: "
+            + ", ".join(path.name for path in selected_files)
+        )
 
     def _browse_output(self):
         folder_path = filedialog.askdirectory(
