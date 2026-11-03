@@ -28,7 +28,7 @@ from hms_safety import (
 class ShotRenameSafetyTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.renders = Path(self.temp_dir.name)
+        self.renders = Path(self.temp_dir.name).resolve()
 
     def tearDown(self):
         set_dry_run(False)
