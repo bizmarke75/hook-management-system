@@ -1008,6 +1008,8 @@ class HMSMasterGUI(tk.Tk):
         self.initial_dry_run = dry_run
         self.initial_output_dir = _resolve_output_dir(output_dir)
         self._audio_selection_generation = 0
+        self._bpm_estimation_pending = False
+        self._pipeline_running = False
         self.title("Hook Management System (HMS) v3.13 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
@@ -1140,7 +1142,14 @@ class HMSMasterGUI(tk.Tk):
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
-        tk.Button(step_row, text="Step 0 (RMS/Beats)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(0)).pack(side="left", expand=True, fill="x", padx=2)
+        self.step_0_btn = tk.Button(
+            step_row,
+            text="Step 0 (RMS/Beats)",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=lambda: self._run_step_async(0),
+        )
+        self.step_0_btn.pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 1 (Renamer)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(1)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 2 (Trimmer)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(2)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
@@ -1207,8 +1216,10 @@ class HMSMasterGUI(tk.Tk):
             print(f"[INFO] Audio source selected: {Path(file_path).name} (Derived slug: '{derived_slug}')")
             self._audio_selection_generation += 1
             generation = self._audio_selection_generation
+            self._bpm_estimation_pending = True
             self.bpm_var.set(f"{DEFAULT_TARGET_BPM:.1f}")
             self.bpm_entry.configure(state="disabled")
+            self._refresh_bpm_dependent_controls()
             print("[INFO] Estimating BPM for the newly selected audio...")
             threading.Thread(
                 target=self._estimate_bpm_worker,
@@ -1248,6 +1259,8 @@ class HMSMasterGUI(tk.Tk):
             return
         self.bpm_var.set(f"{tempo:.2f}")
         self.bpm_entry.configure(state="normal")
+        self._bpm_estimation_pending = False
+        self._refresh_bpm_dependent_controls()
         if error_message:
             print(
                 f"[WARN] BPM estimation failed for {Path(audio_path).name}: "
@@ -1256,6 +1269,18 @@ class HMSMasterGUI(tk.Tk):
             )
         else:
             print(f"[SUCCESS] Estimated Target BPM for this audio: {tempo:.2f}.")
+
+    def _refresh_bpm_dependent_controls(self) -> None:
+        estimating = self.__dict__.get("_bpm_estimation_pending", False)
+        running = self.__dict__.get("_pipeline_running", False)
+        run_all_btn = self.__dict__.get("run_all_btn")
+        step_0_btn = self.__dict__.get("step_0_btn")
+        if run_all_btn is not None:
+            run_all_btn.config(
+                state="disabled" if estimating or running else "normal"
+            )
+        if step_0_btn is not None:
+            step_0_btn.config(state="disabled" if estimating else "normal")
 
     def _browse_renders(self):
         folder_path = filedialog.askdirectory()
@@ -1272,7 +1297,11 @@ class HMSMasterGUI(tk.Tk):
             print(f"[INFO] Output directory selected: {folder_path}")
 
     def _start_complete_pipeline(self):
-        self.run_all_btn.config(state="disabled")
+        if self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Wait for BPM estimation to finish before starting the pipeline.")
+            return
+        self._pipeline_running = True
+        self._refresh_bpm_dependent_controls()
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
         include_patterns = parse_file_patterns(self.include_var.get())
@@ -1292,6 +1321,9 @@ class HMSMasterGUI(tk.Tk):
     ):
         set_dry_run(dry_run)
         try:
+            if self.__dict__.get("_bpm_estimation_pending", False):
+                print("[WARN] Pipeline cancelled because BPM estimation is still in progress.")
+                return
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
@@ -1320,9 +1352,16 @@ class HMSMasterGUI(tk.Tk):
             print(f"[ERROR] Pipeline failed: {str(e)}")
             print(traceback.format_exc())
         finally:
-            self.run_all_btn.after(0, lambda: self.run_all_btn.config(state="normal"))
+            self.run_all_btn.after(0, self._complete_pipeline_ui)
+
+    def _complete_pipeline_ui(self) -> None:
+        self._pipeline_running = False
+        self._refresh_bpm_dependent_controls()
 
     def _run_step_async(self, step_idx):
+        if step_idx == 0 and self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Wait for BPM estimation to finish before running Step 0.")
+            return
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
         include_patterns = parse_file_patterns(self.include_var.get())
@@ -1341,6 +1380,9 @@ class HMSMasterGUI(tk.Tk):
         include_patterns: Sequence[str] | None = None,
         exclude_patterns: Sequence[str] | None = None,
     ):
+        if step_idx == 0 and self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Step 0 cancelled because BPM estimation is still in progress.")
+            return
         set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()

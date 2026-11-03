@@ -271,6 +271,74 @@ class ShotRenameSafetyTests(unittest.TestCase):
         self.assertTrue(pipeline.call_args.kwargs["dry_run"])
         self.assertEqual(pipeline.call_args.kwargs["include_patterns"], ["shot_2a*"])
 
+    def test_pending_bpm_estimate_blocks_pipeline_and_step_zero(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Button:
+            def __init__(self):
+                self.states = []
+
+            def config(self, **kwargs):
+                self.states.append(kwargs["state"])
+
+        gui = object.__new__(HMSMasterGUI)
+        gui._bpm_estimation_pending = True
+        gui.run_all_btn = Button()
+        gui.step_0_btn = Button()
+
+        with patch("hms_master_gui.threading.Thread") as thread:
+            gui._start_complete_pipeline()
+            gui._run_step_async(0)
+
+        thread.assert_not_called()
+        self.assertEqual(gui.run_all_btn.states, [])
+        self.assertEqual(gui.step_0_btn.states, [])
+
+    def test_pending_bpm_estimate_stops_pipeline_worker_before_execution(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Button:
+            def __init__(self):
+                self.states = []
+
+            def config(self, **kwargs):
+                self.states.append(kwargs["state"])
+
+            def after(self, delay, callback):
+                callback()
+
+        gui = object.__new__(HMSMasterGUI)
+        gui._bpm_estimation_pending = True
+        gui._pipeline_running = True
+        gui.run_all_btn = Button()
+        gui.step_0_btn = Button()
+
+        with (
+            patch("hms_master_gui.execute_pipeline") as pipeline,
+            patch("hms_master_gui.set_dry_run"),
+        ):
+            gui._execute_pipeline_worker()
+
+        pipeline.assert_not_called()
+        self.assertFalse(gui._pipeline_running)
+        self.assertEqual(gui.run_all_btn.states, ["disabled"])
+        self.assertEqual(gui.step_0_btn.states, ["disabled"])
+
+    def test_pending_bpm_estimate_stops_step_zero_worker(self):
+        from hms_master_gui import HMSMasterGUI
+
+        gui = object.__new__(HMSMasterGUI)
+        gui._bpm_estimation_pending = True
+
+        with (
+            patch("hms_master_gui.set_dry_run") as set_dry_run_mock,
+            patch("hms_master_gui.run_step_0_audio_analysis") as step_zero,
+        ):
+            gui._step_worker(0)
+
+        set_dry_run_mock.assert_not_called()
+        step_zero.assert_not_called()
+
     def test_bpm_estimator_uses_new_audio_without_previous_tempo_prior(self):
         audio = self.make_file("new_song.wav")
         with (
@@ -314,6 +382,12 @@ class ShotRenameSafetyTests(unittest.TestCase):
             {"configure": lambda self, **kwargs: setattr(self, "state", kwargs["state"])},
         )()
         gui._audio_selection_generation = 0
+        gui.run_all_btn = type(
+            "Button", (), {"config": lambda self, **kwargs: setattr(self, "state", kwargs["state"])}
+        )()
+        gui.step_0_btn = type(
+            "Button", (), {"config": lambda self, **kwargs: setattr(self, "state", kwargs["state"])}
+        )()
 
         with (
             patch("hms_master_gui.filedialog.askopenfilename", return_value=str(audio)),
@@ -325,6 +399,9 @@ class ShotRenameSafetyTests(unittest.TestCase):
         self.assertEqual(gui.slug_var.get(), "new_song")
         self.assertEqual(gui.bpm_var.get(), "170.0")
         self.assertEqual(gui.bpm_entry.state, "disabled")
+        self.assertTrue(gui._bpm_estimation_pending)
+        self.assertEqual(gui.run_all_btn.state, "disabled")
+        self.assertEqual(gui.step_0_btn.state, "disabled")
         self.assertEqual(gui._audio_selection_generation, 1)
         self.assertEqual(thread.call_args.kwargs["args"], (str(audio), 1))
         thread.return_value.start.assert_called_once()
@@ -380,10 +457,18 @@ class ShotRenameSafetyTests(unittest.TestCase):
         gui.audio_var = Value(str(audio))
         gui.bpm_var = Value("170.0")
         gui._audio_selection_generation = 1
+        gui._bpm_estimation_pending = True
+        gui._pipeline_running = False
         gui.bpm_entry = type(
             "Entry",
             (),
             {"configure": lambda self, **kwargs: setattr(self, "state", kwargs["state"])},
+        )()
+        gui.run_all_btn = type(
+            "Button", (), {"config": lambda self, **kwargs: setattr(self, "state", kwargs["state"])}
+        )()
+        gui.step_0_btn = type(
+            "Button", (), {"config": lambda self, **kwargs: setattr(self, "state", kwargs["state"])}
         )()
         gui.after = lambda delay, callback, *args: callback(*args)
 
@@ -392,6 +477,9 @@ class ShotRenameSafetyTests(unittest.TestCase):
 
         self.assertEqual(gui.bpm_var.get(), "126.40")
         self.assertEqual(gui.bpm_entry.state, "normal")
+        self.assertFalse(gui._bpm_estimation_pending)
+        self.assertEqual(gui.run_all_btn.state, "normal")
+        self.assertEqual(gui.step_0_btn.state, "normal")
 
     def test_trimmed_wav_uses_requested_master_trimmed_name(self):
         output = self.renders / "output"
