@@ -51,7 +51,7 @@ python hms_master_gui.py
 
 A healthy HMS run should produce:
 
-- `<slug>_master_audio.wav` — trimmed master audio
+- `<slug>_master_trimmed.wav` — trimmed master audio
 - `<slug>_thebeats.txt` — beat marker timestamps
 - `<slug>_davinci_timeline.xml` — DaVinci Resolve timeline
 - ordered shot files with their source extensions and no unexpected collisions

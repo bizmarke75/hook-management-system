@@ -6,6 +6,8 @@ import urllib.parse
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from hms_safety import LEGACY_MASTER_AUDIO_SUFFIX, MASTER_AUDIO_SUFFIX
+
 
 def verify_davinci_xml(xml_path_str: str) -> bool:
     """
@@ -115,7 +117,8 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
         return False
 
     audio_clip = master_audio_clips[0]
-    if not audio_clip.findtext("name", "").endswith("_master_audio.wav"):
+    master_audio_name = audio_clip.findtext("name", "")
+    if not master_audio_name.endswith((MASTER_AUDIO_SUFFIX, LEGACY_MASTER_AUDIO_SUFFIX)):
         print("[ERROR] The first audio lane must contain the master audio WAV.")
         return False
     raw_dur = audio_clip.findtext("duration", "-1").strip()

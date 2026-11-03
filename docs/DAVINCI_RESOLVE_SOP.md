@@ -24,11 +24,11 @@ This runbook covers the daily production workflow: set up the project, run HMS, 
 Before opening Resolve, confirm that HMS generated the expected files in the selected output folder:
 
 - `<slug>_davinci_timeline.xml` — FCP 7 XML sequence file
-- `<slug>_master_audio.wav` — trimmed 24-bit PCM WAV for the hook window
+- `<slug>_master_trimmed.wav` — trimmed 24-bit PCM WAV for the hook window
 - `<slug>_thebeats.txt` — transient beat timestamps
 - `shot1` through `shotN` — the final ordered render clips, retaining their source extensions
 
-If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`, use that folder instead of the default `output/` location.
+If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`, use that folder instead of the default `output/` location for the timeline, trimmed master WAV, and beat files. Selecting a new master WAV estimates its BPM into the GUI's **Target BPM** field; verify or adjust the estimate as needed. When HMS derives the slug, it removes recognized trailing master/trimmed suffixes from the source filename to avoid duplicated master-name segments in outputs.
 
 ### Project and file safety checks
 

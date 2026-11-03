@@ -25,7 +25,13 @@ from xml.etree import ElementTree as ET
 
 from hms_metadata import probe_media
 from hms_manifest import ManifestStore
-from hms_safety import RollbackStore, is_dry_run, set_dry_run
+from hms_safety import (
+    LEGACY_MASTER_AUDIO_SUFFIX,
+    MASTER_AUDIO_SUFFIX,
+    RollbackStore,
+    is_dry_run,
+    set_dry_run,
+)
 from hms_v31_patcher import build_argument_parser, dispatch_cli
 
 import librosa
@@ -35,6 +41,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 MAX_ANALYSIS_FILE_MB = 512
+DEFAULT_TARGET_BPM = 170.0
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
 
 
@@ -74,8 +81,36 @@ def _validate_audio_analysis_size(audio_file: Path) -> None:
         )
 
 
+def estimate_audio_bpm(audio_path: str | Path) -> float:
+    """Estimate tempo from the selected audio without using a previous track's BPM."""
+    audio_file = Path(audio_path).expanduser().resolve()
+    _validate_audio_analysis_size(audio_file)
+    y, sr = librosa.load(str(audio_file), sr=22050, mono=True)
+    onset_envelope = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)
+    if onset_envelope.size == 0 or float(np.max(onset_envelope)) <= 0:
+        raise ValueError("No beat activity was detected in the selected audio.")
+    tempos = librosa.feature.tempo(
+        onset_envelope=onset_envelope,
+        sr=sr,
+        hop_length=512,
+        aggregate=np.median,
+        max_tempo=300.0,
+    )
+    tempo = float(np.asarray(tempos).reshape(-1)[0])
+    return round(_validate_bpm(tempo), 2)
+
+
 def parse_file_patterns(value: str) -> list[str]:
     return [pattern.strip() for pattern in re.split(r"[,;\n]", value) if pattern.strip()]
+
+
+def derive_slug_from_audio(audio_path: str | Path) -> str:
+    stem = Path(audio_path).stem
+    for suffix in ("_master_trimmed", "_master_audio", "_trimmed", "_master"):
+        if stem.casefold().endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return re.sub(r"[^a-zA-Z0-9_]", "_", stem.lower()).strip("_")
 
 
 def select_render_files(
@@ -470,7 +505,7 @@ def run_step_2_audio_trimmer(
     duration_s = float(lines[2]) if len(lines) > 2 else 40.0
 
     print(f"[INFO] Trimming audio: start = {hook_start_s:.3f}s, duration = {duration_s:.3f}s")
-    target_wav = output_dir / f"{slug}_master_audio.wav"
+    target_wav = output_dir / f"{slug}{MASTER_AUDIO_SUFFIX}"
     if dry_run:
         print(f"[DRY-RUN] Would create {target_wav}")
         return target_wav
@@ -512,7 +547,7 @@ def run_step_3_sync_metadata(
     output_dir = _resolve_output_dir(output_dir)
     hook_file = output_dir / f"{slug}_hooktimestamp.txt"
     beats_file = output_dir / f"{slug}_thebeats.txt"
-    audio_wav = output_dir / f"{slug}_master_audio.wav"
+    audio_wav = output_dir / f"{slug}{MASTER_AUDIO_SUFFIX}"
 
     if not hook_file.exists():
         raise FileNotFoundError(f"Missing hook timestamps: {hook_file.name}")
@@ -546,7 +581,7 @@ def run_step_4_generate_davinci_xml(
     total_duration = _validate_duration(total_duration)
 
     output_dir = _resolve_output_dir(output_dir)
-    audio_wav = output_dir / f"{slug}_master_audio.wav"
+    audio_wav = output_dir / f"{slug}{MASTER_AUDIO_SUFFIX}"
     beats_file = output_dir / f"{slug}_thebeats.txt"
 
     if not audio_wav.exists() or not beats_file.exists():
@@ -694,7 +729,7 @@ def run_step_4_generate_davinci_xml(
     ET.SubElement(audio_track_node, "locked").text = "FALSE"
     ET.SubElement(audio_track_node, "outputchannelindex").text = "1"
     audio_clip_item = ET.SubElement(audio_track_node, "clipitem", {"id": "master-audio"})
-    ET.SubElement(audio_clip_item, "name").text = f"{slug}_master_audio.wav"
+    ET.SubElement(audio_clip_item, "name").text = audio_wav.name
     ET.SubElement(audio_clip_item, "enabled").text = "TRUE"
     ET.SubElement(audio_clip_item, "duration").text = str(total_frames)
     _append_rate(audio_clip_item, fps)
@@ -704,7 +739,7 @@ def run_step_4_generate_davinci_xml(
     ET.SubElement(audio_clip_item, "end").text = str(total_frames)
 
     audio_file_node = ET.SubElement(audio_clip_item, "file", {"id": "file-master-audio"})
-    ET.SubElement(audio_file_node, "name").text = f"{slug}_master_audio.wav"
+    ET.SubElement(audio_file_node, "name").text = audio_wav.name
     ET.SubElement(audio_file_node, "pathurl").text = _file_path_url(audio_wav)
     _append_rate(audio_file_node, fps)
     ET.SubElement(audio_file_node, "duration").text = str(total_frames)
@@ -901,10 +936,15 @@ def verify_pipeline_outputs(
     """Check generated files and validate the existing XML without modifying them."""
     duration = _validate_duration(duration)
     output_dir = _resolve_output_dir(output_dir)
+    master_wav = output_dir / f"{slug}{MASTER_AUDIO_SUFFIX}"
+    if not master_wav.is_file():
+        legacy_master_wav = output_dir / f"{slug}{LEGACY_MASTER_AUDIO_SUFFIX}"
+        if legacy_master_wav.is_file():
+            master_wav = legacy_master_wav
     required = [
         output_dir / f"{slug}_hooktimestamp.txt",
         output_dir / f"{slug}_thebeats.txt",
-        output_dir / f"{slug}_master_audio.wav",
+        master_wav,
         output_dir / f"{slug}_davinci_timeline.xml",
     ]
     missing = [path for path in required if not path.is_file()]
@@ -967,6 +1007,9 @@ class HMSMasterGUI(tk.Tk):
         super().__init__()
         self.initial_dry_run = dry_run
         self.initial_output_dir = _resolve_output_dir(output_dir)
+        self._audio_selection_generation = 0
+        self._bpm_estimation_pending = False
+        self._pipeline_running = False
         self.title("Hook Management System (HMS) v3.13 - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
@@ -1077,7 +1120,14 @@ class HMSMasterGUI(tk.Tk):
 
         tk.Label(meta_subframe, text="Target BPM:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).pack(side="left")
         self.bpm_var = tk.StringVar(value="170.0")
-        tk.Entry(meta_subframe, textvariable=self.bpm_var, width=8, bg=self.panel_color, fg=self.fg_color).pack(side="left", padx=(4, 16))
+        self.bpm_entry = tk.Entry(
+            meta_subframe,
+            textvariable=self.bpm_var,
+            width=8,
+            bg=self.panel_color,
+            fg=self.fg_color,
+        )
+        self.bpm_entry.pack(side="left", padx=(4, 16))
 
         tk.Label(meta_subframe, text="Duration (s):", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).pack(side="left")
         self.duration_var = tk.StringVar(value="40.0")
@@ -1092,7 +1142,14 @@ class HMSMasterGUI(tk.Tk):
         step_row = tk.Frame(ctrl_frame, bg=self.bg_color)
         step_row.pack(fill="x", padx=8, pady=(0, 6))
 
-        tk.Button(step_row, text="Step 0 (RMS/Beats)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(0)).pack(side="left", expand=True, fill="x", padx=2)
+        self.step_0_btn = tk.Button(
+            step_row,
+            text="Step 0 (RMS/Beats)",
+            bg=self.btn_bg,
+            fg=self.fg_color,
+            command=lambda: self._run_step_async(0),
+        )
+        self.step_0_btn.pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 1 (Renamer)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(1)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 2 (Trimmer)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(2)).pack(side="left", expand=True, fill="x", padx=2)
         tk.Button(step_row, text="Step 3 (Sync)", bg=self.btn_bg, fg=self.fg_color, command=lambda: self._run_step_async(3)).pack(side="left", expand=True, fill="x", padx=2)
@@ -1154,9 +1211,76 @@ class HMSMasterGUI(tk.Tk):
         file_path = filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav;*.mp3;*.flac;*.m4a"), ("All Files", "*.*")])
         if file_path:
             self.audio_var.set(file_path)
-            derived_slug = re.sub(r'[^a-zA-Z0-9_]', '_', Path(file_path).stem.lower())
+            derived_slug = derive_slug_from_audio(file_path)
             self.slug_var.set(derived_slug)
             print(f"[INFO] Audio source selected: {Path(file_path).name} (Derived slug: '{derived_slug}')")
+            self._audio_selection_generation += 1
+            generation = self._audio_selection_generation
+            self._bpm_estimation_pending = True
+            self.bpm_var.set(f"{DEFAULT_TARGET_BPM:.1f}")
+            self.bpm_entry.configure(state="disabled")
+            self._refresh_bpm_dependent_controls()
+            print("[INFO] Estimating BPM for the newly selected audio...")
+            threading.Thread(
+                target=self._estimate_bpm_worker,
+                args=(file_path, generation),
+                daemon=True,
+            ).start()
+
+    def _estimate_bpm_worker(self, audio_path: str, generation: int) -> None:
+        try:
+            tempo = estimate_audio_bpm(audio_path)
+            error_message = None
+        except Exception as error:
+            tempo = DEFAULT_TARGET_BPM
+            error_message = str(error)
+        try:
+            self.after(
+                0,
+                self._apply_bpm_estimate,
+                audio_path,
+                generation,
+                tempo,
+                error_message,
+            )
+        except tk.TclError:
+            return
+
+    def _apply_bpm_estimate(
+        self,
+        audio_path: str,
+        generation: int,
+        tempo: float,
+        error_message: str | None,
+    ) -> None:
+        if generation != self._audio_selection_generation:
+            return
+        if Path(self.audio_var.get()).expanduser().resolve() != Path(audio_path).expanduser().resolve():
+            return
+        self.bpm_var.set(f"{tempo:.2f}")
+        self.bpm_entry.configure(state="normal")
+        self._bpm_estimation_pending = False
+        self._refresh_bpm_dependent_controls()
+        if error_message:
+            print(
+                f"[WARN] BPM estimation failed for {Path(audio_path).name}: "
+                f"{error_message}. Using default {DEFAULT_TARGET_BPM:.1f} BPM; "
+                "please verify or edit the Target BPM."
+            )
+        else:
+            print(f"[SUCCESS] Estimated Target BPM for this audio: {tempo:.2f}.")
+
+    def _refresh_bpm_dependent_controls(self) -> None:
+        estimating = self.__dict__.get("_bpm_estimation_pending", False)
+        running = self.__dict__.get("_pipeline_running", False)
+        run_all_btn = self.__dict__.get("run_all_btn")
+        step_0_btn = self.__dict__.get("step_0_btn")
+        if run_all_btn is not None:
+            run_all_btn.config(
+                state="disabled" if estimating or running else "normal"
+            )
+        if step_0_btn is not None:
+            step_0_btn.config(state="disabled" if estimating else "normal")
 
     def _browse_renders(self):
         folder_path = filedialog.askdirectory()
@@ -1173,7 +1297,11 @@ class HMSMasterGUI(tk.Tk):
             print(f"[INFO] Output directory selected: {folder_path}")
 
     def _start_complete_pipeline(self):
-        self.run_all_btn.config(state="disabled")
+        if self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Wait for BPM estimation to finish before starting the pipeline.")
+            return
+        self._pipeline_running = True
+        self._refresh_bpm_dependent_controls()
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
         include_patterns = parse_file_patterns(self.include_var.get())
@@ -1193,6 +1321,9 @@ class HMSMasterGUI(tk.Tk):
     ):
         set_dry_run(dry_run)
         try:
+            if self.__dict__.get("_bpm_estimation_pending", False):
+                print("[WARN] Pipeline cancelled because BPM estimation is still in progress.")
+                return
             audio_path = self.audio_var.get().strip()
             renders_path = self.renders_var.get().strip()
             slug = self.slug_var.get().strip()
@@ -1221,9 +1352,16 @@ class HMSMasterGUI(tk.Tk):
             print(f"[ERROR] Pipeline failed: {str(e)}")
             print(traceback.format_exc())
         finally:
-            self.run_all_btn.after(0, lambda: self.run_all_btn.config(state="normal"))
+            self.run_all_btn.after(0, self._complete_pipeline_ui)
+
+    def _complete_pipeline_ui(self) -> None:
+        self._pipeline_running = False
+        self._refresh_bpm_dependent_controls()
 
     def _run_step_async(self, step_idx):
+        if step_idx == 0 and self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Wait for BPM estimation to finish before running Step 0.")
+            return
         dry_run = self.dry_run_var.get()
         output_dir = self.output_var.get().strip()
         include_patterns = parse_file_patterns(self.include_var.get())
@@ -1242,6 +1380,9 @@ class HMSMasterGUI(tk.Tk):
         include_patterns: Sequence[str] | None = None,
         exclude_patterns: Sequence[str] | None = None,
     ):
+        if step_idx == 0 and self.__dict__.get("_bpm_estimation_pending", False):
+            print("[WARN] Step 0 cancelled because BPM estimation is still in progress.")
+            return
         set_dry_run(dry_run)
         try:
             audio_path = self.audio_var.get().strip()

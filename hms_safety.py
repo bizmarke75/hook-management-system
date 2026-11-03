@@ -10,6 +10,8 @@ from hms_manifest import ManifestStore
 
 
 _DRY_RUN = ContextVar("hms_dry_run", default=False)
+MASTER_AUDIO_SUFFIX = "_master_trimmed.wav"
+LEGACY_MASTER_AUDIO_SUFFIX = "_master_audio.wav"
 
 
 def set_dry_run(enabled: bool) -> None:
@@ -56,7 +58,7 @@ class RollbackStore(ManifestStore):
     OUTPUT_SUFFIXES = (
         "_hooktimestamp.txt",
         "_thebeats.txt",
-        "_master_audio.wav",
+        MASTER_AUDIO_SUFFIX,
         "_davinci_timeline.xml",
     )
 
@@ -98,7 +100,7 @@ class RollbackStore(ManifestStore):
                 "renders_dir": str(Path(renders_dir).resolve()),
                 "output_dir": str(output_dir),
                 "xml": f"{slug}_davinci_timeline.xml",
-                "wav": f"{slug}_master_audio.wav",
+                "wav": f"{slug}{MASTER_AUDIO_SUFFIX}",
                 "beats": f"{slug}_thebeats.txt",
                 "hooktimestamp": f"{slug}_hooktimestamp.txt",
                 "renamed_clips": 0,
@@ -187,9 +189,19 @@ class RollbackStore(ManifestStore):
         backed_up_outputs = manifest.get("backed_up_outputs")
         if not isinstance(backed_up_outputs, list):
             raise ValueError("Restore blocked. Invalid output backup manifest.")
+        slug = manifest["slug"]
+        manifest_wav = manifest.get("wav")
+        if manifest_wav not in {
+            f"{slug}{MASTER_AUDIO_SUFFIX}",
+            f"{slug}{LEGACY_MASTER_AUDIO_SUFFIX}",
+        }:
+            raise ValueError("Restore blocked. Manifest has an invalid master WAV filename.")
         expected_names = {
-            f"{manifest['slug']}{suffix}" for suffix in self.OUTPUT_SUFFIXES
+            f"{slug}{suffix}"
+            for suffix in self.OUTPUT_SUFFIXES
+            if suffix != MASTER_AUDIO_SUFFIX
         }
+        expected_names.add(manifest_wav)
         declared_names = set()
         for entry in backed_up_outputs:
             if (

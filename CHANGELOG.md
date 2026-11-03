@@ -15,6 +15,14 @@ All notable changes to the Hook Management System (HMS) project will be document
 ### Changed
 - Update application and package labels for HMS v3.13.
 
+## [Unreleased]
+
+### Fixed
+- Estimate Target BPM from each newly selected master WAV instead of carrying a previous track's value.
+- Name trimmed master audio `<slug>_master_trimmed.wav` consistently in generated timelines, validation, and recovery manifests.
+- Keep verify and restore compatible with existing `<slug>_master_audio.wav` outputs and recovery manifests.
+- Strip recognized trailing master/trimmed suffixes from selected audio names to avoid duplicate segments in output filenames.
+
 ## [v3.12] - 2026-10-26
 
 ### Added
