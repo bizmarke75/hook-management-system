@@ -2,9 +2,21 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
-## [v3.13] - 2026-10-26
+## [v3.14] - 2026-11-03
 
 ### Fixed
+- Estimate Target BPM from each newly selected master WAV instead of carrying a previous track's value, and block BPM-dependent runs until estimation completes.
+- Name trimmed master audio `<slug>_master_trimmed.wav` consistently in generated timelines, validation, and recovery manifests.
+- Keep verify and restore compatible with existing `<slug>_master_audio.wav` outputs and recovery manifests.
+- Strip recognized trailing master/trimmed suffixes from selected audio names to avoid duplicate segments in output filenames.
+
+### Added
+- Add regression tests for BPM estimation, output naming, and pending-estimation workflow guards.
+
+### Changed
+- Update application and package labels for HMS v3.14.
+
+## [v3.13] - 2026-10-26
 - Prevent full-pipeline dry runs from entering code that mutates files; dry-run checks are also enforced by individual processing steps.
 - Stop broad render-folder renaming by requiring explicit clip include patterns, with optional exclusions and explicit ordering for UUID-named clips.
 - Keep unselected files untouched, preserve selected clips' source extensions, and block collisions with files outside the selection.
@@ -16,12 +28,6 @@ All notable changes to the Hook Management System (HMS) project will be document
 - Update application and package labels for HMS v3.13.
 
 ## [Unreleased]
-
-### Fixed
-- Estimate Target BPM from each newly selected master WAV instead of carrying a previous track's value.
-- Name trimmed master audio `<slug>_master_trimmed.wav` consistently in generated timelines, validation, and recovery manifests.
-- Keep verify and restore compatible with existing `<slug>_master_audio.wav` outputs and recovery manifests.
-- Strip recognized trailing master/trimmed suffixes from selected audio names to avoid duplicate segments in output filenames.
 
 ## [v3.12] - 2026-10-26
 

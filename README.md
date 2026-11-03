@@ -1,6 +1,6 @@
 # Hook Management System (HMS)
 
-Version: v3.13
+Version: v3.14
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -84,7 +84,7 @@ This generates a Windows executable in the `dist` directory.
 Install the wheel attached to a GitHub Release with Python 3.10 or later:
 
 ```powershell
-python -m pip install .\hook_management_system-3.13.0-py3-none-any.whl
+python -m pip install .\hook_management_system-3.14.0-py3-none-any.whl
 hms
 ```
 
@@ -131,7 +131,7 @@ Start here for the day-to-day production flow:
 - [`docs/DAVINCI_RESOLVE_SOP.md`](docs/DAVINCI_RESOLVE_SOP.md) — concise operator runbook for HMS execution, Resolve import, verification, recovery, and final export
 - [`docs/EDITOR_ONBOARDING.md`](docs/EDITOR_ONBOARDING.md) — onboarding guide for new editors/operators
 
-The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12; v3.13 verification is not documented. The tag-triggered workflow publishes a release directly and does not run regression tests or smoke-test the packaged outputs. Complete the runbook's **Release verification checklist** against the candidate before creating a release tag.
+The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12; v3.14 verification is not documented. The tag-triggered workflow publishes a release directly and does not smoke-test the packaged outputs or import a generated timeline into Resolve. Complete the runbook's **Release verification checklist** against the candidate before creating a release tag.
 
 ## Changelog
 

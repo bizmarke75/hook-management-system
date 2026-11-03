@@ -1,7 +1,7 @@
 # 337 West Productions — HMS Operator Runbook
 
 **Document ID:** SOP-HMS-001
-**Project:** Hook Management System (HMS) v3.13
+**Project:** Hook Management System (HMS) v3.14
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 10/11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
 **Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
@@ -173,6 +173,6 @@ Before creating a release tag, close these validation gaps against the exact can
 - Keep the working-directory `rollback/` folder available for recovery, but exclude it from source and release artifacts; test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
 - Import the generated XML and relink media in the current production Resolve version before release approval.
 
-These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.13. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
+These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.14. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
 
 ---

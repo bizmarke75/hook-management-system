@@ -37,6 +37,11 @@ jobs:
         run: |
           python -c "import soundfile, librosa, scipy, numpy, tkinter; print('[SUCCESS] HMS runtime dependencies loaded cleanly.')"
 
+      - name: Run Regression Tests
+        shell: powershell
+        run: |
+          python -m unittest discover -s tests -v
+
       - name: Build Standalone Executable
         shell: powershell
         run: |
