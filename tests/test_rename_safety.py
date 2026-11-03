@@ -2,15 +2,27 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
+
+import numpy as np
 
 from hms_master_gui import (
+    derive_slug_from_audio,
     dry_run_pipeline,
+    estimate_audio_bpm,
     execute_pipeline,
+    run_step_4_generate_davinci_xml,
+    run_step_2_audio_trimmer,
     natural_sort_key,
     run_step_1_shot_renamer,
     select_render_files,
 )
-from hms_safety import set_dry_run
+from hms_safety import (
+    LEGACY_MASTER_AUDIO_SUFFIX,
+    MASTER_AUDIO_SUFFIX,
+    RollbackStore,
+    set_dry_run,
+)
 
 
 class ShotRenameSafetyTests(unittest.TestCase):
@@ -258,6 +270,242 @@ class ShotRenameSafetyTests(unittest.TestCase):
         set_dry_run_mock.assert_called_once_with(True)
         self.assertTrue(pipeline.call_args.kwargs["dry_run"])
         self.assertEqual(pipeline.call_args.kwargs["include_patterns"], ["shot_2a*"])
+
+    def test_bpm_estimator_uses_new_audio_without_previous_tempo_prior(self):
+        audio = self.make_file("new_song.wav")
+        with (
+            patch("hms_master_gui.librosa.load", return_value=(np.ones(8), 22050)) as load,
+            patch(
+                "hms_master_gui.librosa.onset.onset_strength",
+                return_value=np.array([0.0, 0.4, 0.8]),
+            ),
+            patch(
+                "hms_master_gui.librosa.feature.tempo",
+                return_value=np.array([128.75]),
+            ) as estimate,
+        ):
+            result = estimate_audio_bpm(audio)
+
+        self.assertEqual(result, 128.75)
+        load.assert_called_once_with(str(audio.resolve()), sr=22050, mono=True)
+        self.assertNotIn("start_bpm", estimate.call_args.kwargs)
+
+    def test_browse_audio_resets_and_starts_estimate_for_new_source(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        audio = self.make_file("New Song.wav")
+        gui = object.__new__(HMSMasterGUI)
+        gui.audio_var = Value("old.wav")
+        gui.slug_var = Value("old")
+        gui.bpm_var = Value("123.0")
+        gui.bpm_entry = type(
+            "Entry",
+            (),
+            {"configure": lambda self, **kwargs: setattr(self, "state", kwargs["state"])},
+        )()
+        gui._audio_selection_generation = 0
+
+        with (
+            patch("hms_master_gui.filedialog.askopenfilename", return_value=str(audio)),
+            patch("hms_master_gui.threading.Thread") as thread,
+        ):
+            gui._browse_audio()
+
+        self.assertEqual(gui.audio_var.get(), str(audio))
+        self.assertEqual(gui.slug_var.get(), "new_song")
+        self.assertEqual(gui.bpm_var.get(), "170.0")
+        self.assertEqual(gui.bpm_entry.state, "disabled")
+        self.assertEqual(gui._audio_selection_generation, 1)
+        self.assertEqual(thread.call_args.kwargs["args"], (str(audio), 1))
+        thread.return_value.start.assert_called_once()
+
+    def test_audio_slug_avoids_duplicate_master_suffix(self):
+        self.assertEqual(
+            derive_slug_from_audio("C:\\audio\\Project_Master.wav"),
+            "project",
+        )
+        self.assertEqual(
+            derive_slug_from_audio("C:\\audio\\Project_master_trimmed.wav"),
+            "project",
+        )
+
+    def test_stale_bpm_estimate_does_not_replace_new_selection(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        gui = object.__new__(HMSMasterGUI)
+        gui.audio_var = Value("new.wav")
+        gui.bpm_var = Value("170.0")
+        gui._audio_selection_generation = 2
+        gui.bpm_entry = type("Entry", (), {"configure": lambda self, **kwargs: None})()
+
+        gui._apply_bpm_estimate("old.wav", 1, 142.0, None)
+
+        self.assertEqual(gui.bpm_var.get(), "170.0")
+
+    def test_completed_bpm_estimate_updates_current_audio_selection(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        audio = self.make_file("new_song.wav")
+        gui = object.__new__(HMSMasterGUI)
+        gui.audio_var = Value(str(audio))
+        gui.bpm_var = Value("170.0")
+        gui._audio_selection_generation = 1
+        gui.bpm_entry = type(
+            "Entry",
+            (),
+            {"configure": lambda self, **kwargs: setattr(self, "state", kwargs["state"])},
+        )()
+        gui.after = lambda delay, callback, *args: callback(*args)
+
+        with patch("hms_master_gui.estimate_audio_bpm", return_value=126.4):
+            gui._estimate_bpm_worker(str(audio), 1)
+
+        self.assertEqual(gui.bpm_var.get(), "126.40")
+        self.assertEqual(gui.bpm_entry.state, "normal")
+
+    def test_trimmed_wav_uses_requested_master_trimmed_name(self):
+        output = self.renders / "output"
+        output.mkdir()
+        (output / "track_hooktimestamp.txt").write_text(
+            "0\n40\n40\n",
+            encoding="utf-8",
+        )
+
+        target = run_step_2_audio_trimmer(
+            "master.wav",
+            "track",
+            dry_run=True,
+            output_dir=output,
+        )
+
+        self.assertEqual(target.name, f"track{MASTER_AUDIO_SUFFIX}")
+        self.assertFalse(target.exists())
+        self.assertFalse((output / "track_master_audio.wav").exists())
+
+    def test_recovery_manifest_tracks_renamed_trimmed_audio_output(self):
+        output = self.renders / "output"
+        output.mkdir()
+        store = RollbackStore(root_dir=self.renders)
+
+        run_id = store.begin_run(
+            "track",
+            "master.wav",
+            str(self.renders),
+            output,
+        )
+        manifest = store._read_manifest(run_id)
+
+        self.assertEqual(manifest["wav"], f"track{MASTER_AUDIO_SUFFIX}")
+        self.assertIn(
+            f"track{MASTER_AUDIO_SUFFIX}",
+            {entry["name"] for entry in manifest["backed_up_outputs"]},
+        )
+
+    def test_recovery_still_accepts_legacy_master_audio_manifest(self):
+        output = self.renders / "output"
+        output.mkdir()
+        store = RollbackStore(root_dir=self.renders)
+        run_id = store.begin_run(
+            "track",
+            "master.wav",
+            str(self.renders),
+            output,
+        )
+        manifest = store._read_manifest(run_id)
+        manifest["status"] = "completed"
+        manifest["rename_state"] = "restored"
+        manifest["wav"] = f"track{LEGACY_MASTER_AUDIO_SUFFIX}"
+        for entry in manifest["backed_up_outputs"]:
+            if entry["name"] == f"track{MASTER_AUDIO_SUFFIX}":
+                entry["name"] = f"track{LEGACY_MASTER_AUDIO_SUFFIX}"
+                if entry["existed_before"]:
+                    entry["backup"] = f"backups/{entry['name']}"
+        store._write_json(store._manifest_path(run_id), manifest)
+
+        renders_dir, output_dir, moves = store._preflight_restore(manifest)
+
+        self.assertEqual(renders_dir, self.renders)
+        self.assertEqual(output_dir, output)
+        self.assertEqual(moves, [])
+
+    def test_timeline_xml_uses_trimmed_audio_name_and_selected_output_directory(self):
+        output = self.renders / "custom-output"
+        output.mkdir()
+        renders = self.renders / "renders"
+        renders.mkdir()
+        clip = renders / "shot1.mp4"
+        clip.write_bytes(b"video")
+        (output / f"track{MASTER_AUDIO_SUFFIX}").write_bytes(b"audio")
+        (output / "track_thebeats.txt").write_text("0.5\n", encoding="utf-8")
+        audio_metadata = {
+            "has_audio": True,
+            "duration": 40.0,
+            "samplerate": 48000,
+            "channels": 2,
+            "depth": 24,
+        }
+        video_metadata = {
+            "has_video": True,
+            "has_audio": False,
+            "duration": 10.0,
+            "width": 1920,
+            "height": 1080,
+            "fps": "24",
+            "audio_duration": 0.0,
+            "samplerate": 0,
+            "channels": 0,
+            "depth": 0,
+        }
+
+        with patch(
+            "hms_master_gui.probe_media",
+            side_effect=[audio_metadata, video_metadata],
+        ):
+            xml_path = run_step_4_generate_davinci_xml(
+                "track",
+                str(renders),
+                output_dir=output,
+                selected_files=[clip],
+            )
+
+        self.assertEqual(xml_path, output / "track_davinci_timeline.xml")
+        root = ET.parse(xml_path).getroot()
+        master_clip = root.find("./sequence/media/audio/track/clipitem")
+        self.assertIsNotNone(master_clip)
+        self.assertEqual(master_clip.findtext("name"), f"track{MASTER_AUDIO_SUFFIX}")
+        self.assertTrue(
+            master_clip.findtext("file/pathurl").endswith("track_master_trimmed.wav")
+        )
 
 
 if __name__ == "__main__":

@@ -93,8 +93,9 @@ The Python package includes the HMS GUI and CLI modules. It requires `ffprobe` o
 ## Run history and recovery
 
 The GUI includes a dry-run checkbox, a verify-only action, and controls to roll back the latest run or restore a specific run. Run manifests, rename maps, and overwritten-output backups are stored under `rollback/`.
-Use the GUI's **Output Dir** field to choose where generated hook timestamps, beat markers, WAV audio, and timeline XML are saved. By default, files go to `output/` in the current working directory. Run history and recovery backups remain under the project-level `rollback/` folder.
+Use the GUI's **Output Dir** field to choose where generated hook timestamps, beat markers, the trimmed WAV, and timeline XML are saved. By default, files go to `output/` in the current working directory. The trimmed file is named `<slug>_master_trimmed.wav`; the timeline XML is `<slug>_davinci_timeline.xml`. Run history and recovery backups remain under the project-level `rollback/` folder.
 Before renaming or building a timeline, specify **Include Clips** with exact filenames or wildcards (comma-separated), for example `shot_2a*, shot_2b*`. HMS will only process matching video clips; **Exclude Clips** provides optional additional filename/glob exclusions. Exact filenames are processed in the order entered, so UUID-named clips can be explicitly ordered. Leave the include field blank and the operation is blocked. The dry-run checkbox is enforced by the pipeline and individual file-writing/renaming steps.
+When you select a new master audio file with **Browse Audio**, HMS estimates its BPM in the background and updates **Target BPM** for that file. You can edit the estimate before running. If estimation fails, HMS visibly warns and uses the 170 BPM default rather than keeping a previous track's value. A source already named with a trailing `_master`, `_master_audio`, `_master_trimmed`, or `_trimmed` suffix has that suffix removed when HMS derives its track slug, preventing duplicate master-name segments.
 
 The command-line utility supports recovery and batch execution:
 
