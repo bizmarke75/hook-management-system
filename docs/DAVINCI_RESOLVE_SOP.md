@@ -1,125 +1,178 @@
-# 337 West Productions — DaVinci Resolve Free Standard Operating Procedure (SOP)
+# 337 West Productions — HMS Operator Runbook
 
 **Document ID:** SOP-HMS-001
 **Project:** Hook Management System (HMS) v3.13
-**Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 11
+**Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 10/11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
 **Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
 
----
-
-## 1. Pre-conform specification
-
-Before opening DaVinci Resolve, verify that the HMS pipeline has generated the required output assets in `output/`:
-
-- `output/<slug>_davinci_timeline.xml` — FCP 7 XML sequence file
-- `output/<slug>_master_audio.wav` — 24-bit PCM WAV trimmed to the hook window
-- `output/<slug>_thebeats.txt` — relative beat transient timestamps
-- `C:\renders\shot1.mp4` through `shotN.mp4` — sequenced render shots
-
-If a custom **Output Dir** is selected in the HMS GUI or supplied with `--output-dir`, use that folder instead of `output/` for the generated timeline, master WAV, and beat files.
+This runbook covers the daily production workflow: set up the project, run HMS, verify the generated sequence, import it into DaVinci Resolve, and recover or correct a failed run. It keeps the final delivery/export settings in the same guide so operators can move seamlessly from generation to final export.
 
 ---
 
-## 2. Project setup and timebase lock
+## 1. Before you start
+
+### Required inputs
+
+- A valid master audio source
+- A render directory with sequenced video shots
+- `ffprobe` on `PATH`
+- A Windows 10/11 machine with DaVinci Resolve Free installed
+
+### Expected HMS outputs
+
+Before opening Resolve, confirm that HMS generated the expected files in the selected output folder:
+
+- `<slug>_davinci_timeline.xml` — FCP 7 XML sequence file
+- `<slug>_master_audio.wav` — trimmed 24-bit PCM WAV for the hook window
+- `<slug>_thebeats.txt` — transient beat timestamps
+- `shot1` through `shotN` — the final ordered render clips, retaining their source extensions
+
+If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`, use that folder instead of the default `output/` location.
+
+### Project and file safety checks
+
+- Confirm the include list is not blank; HMS blocks blank include patterns before generating or renaming output.
+- Set explicit include patterns for the intended clips (for example `shot_2a*, shot_2b*`).
+- Use `--exclude` or **Exclude Clips** for optional filename patterns that should be skipped.
+- Use **DRY RUN** or `--dry-run` before a production run when you are validating selection or ordering.
+
+---
+
+## 2. Run HMS safely
+
+### GUI workflow
+
+1. Open `hms_master_gui.py`.
+2. Select the master audio file and render directory.
+3. Set the output folder if needed.
+4. Add the exact include patterns or wildcard filters for the shots to process.
+5. Add optional exclude patterns if some clips should be ignored.
+6. Run with **Dry Run** enabled to preview the planned operations; review the log and selection.
+7. When the preview is correct, disable **Dry Run**, run again, and review the log output.
+
+### CLI workflow
+
+```powershell
+python hms_v31_patcher.py --dry-run --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*" --exclude "*_final*" --output-dir "D:\HMS\output"
+python hms_v31_patcher.py --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*" --output-dir "D:\HMS\output"
+python hms_v31_patcher.py --verify-only --slug track --renders "C:\renders" --output-dir "D:\HMS\output"
+```
+
+Important notes:
+
+- Exact filenames are processed in the order entered.
+- Unmatched files are left untouched.
+- The dry-run guard applies to individual steps as well as the full pipeline.
+- `--verify-only` checks output integrity without rewriting files.
+
+---
+
+## 3. Recovery and rollback before import
+
+HMS stores run history under `rollback/run_NNN/` in the application's working directory (normally the project root), with manifests, rename maps, and backups of prior output files. Keep this folder with the same project/working directory used for the run.
+
+Use either:
+
+- the GUI controls (**ROLLBACK LAST RUN** / **RESTORE RUN...**), or
+- CLI recovery commands:
+
+```powershell
+python hms_v31_patcher.py --rollback
+python hms_v31_patcher.py --restore run_003
+```
+
+Recovery is safety-checked and will stop if required renamed shots or backups are missing, or if a restore would overwrite an existing file unexpectedly. Treat run history as local recovery data, not an independent backup: protect a copy of the `rollback/` folder and the source media separately.
+
+---
+
+## 4. DaVinci Resolve setup
 
 > Warning: DaVinci Resolve Free locks the project timebase once media or a timeline is imported. Set the project to 24 fps before bringing in any assets.
 
 1. Launch DaVinci Resolve Free.
-2. Click New Project in the Project Manager.
-3. Name the project: `HMS_<SLUG>_MASTER`.
-4. Press `Shift + 9` to open Project Settings.
-5. Under Master Settings > Timeline Format:
-   - Timeline resolution: Match the desired output; the XML includes probed source dimensions for each shot
+2. Create a new project named `HMS_<SLUG>_MASTER`.
+3. Open **Project Settings** (`Shift + 9`).
+4. Under **Master Settings > Timeline Format**:
+   - Timeline resolution: match the final output target
    - Pixel aspect ratio: `Square`
    - Timeline frame rate: `24`
    - Playback frame rate: `24`
-6. Save the project.
+5. Save the project.
 
 ---
 
-## 3. Timeline import procedure
+## 5. Import the HMS XML into Resolve
 
-1. Ensure the Edit page (`Shift + 4`) or Media page (`Shift + 2`) is active.
+1. Ensure the **Edit** page (`Shift + 4`) or **Media** page (`Shift + 2`) is active.
 2. Open the import dialog with `Ctrl + Shift + I`.
-3. Navigate to the generated output folder.
-4. Select the `<slug>_davinci_timeline.xml` file and click Open.
+3. Navigate to the output folder that contains the generated XML.
+4. Select `<slug>_davinci_timeline.xml` and click **Open**.
+
+When the **Load XML** dialog appears, use:
+
+| Dialog option | Setting |
+| :--- | :--- |
+| Timeline Name | Leave default |
+| Automatically set project settings | Unchecked |
+| Automatically import source clips into media pool | Checked |
+| Ignore file extensions when matching | Unchecked |
+| Use sizing information | Checked |
+| Link to source camera files | Unchecked |
+
+Then click **OK**.
 
 ---
 
-## 4. Load XML dialog configuration
+## 6. Post-import validation checklist
 
-When the Load XML dialog appears, use these settings:
+Use the Edit page and confirm all of the following:
 
-| Dialog option | Setting | Purpose |
-| :--- | :--- | :--- |
-| Timeline Name | Leave default | Matches the generated sequence name |
-| Automatically set project settings | Unchecked | Avoids overriding the 24 fps lock |
-| Automatically import source clips into media pool | Checked | Pulls clips from the renders folder |
-| Ignore file extensions when matching | Unchecked | Keeps exact `.mp4` and `.wav` linking |
-| Use sizing information | Checked | Preserves sizing metadata from probed source media |
-| Link to source camera files | Unchecked | HMS targets local render assets |
+- [ ] Timeline ruler ends at `00:00:40:00` (960 frames)
+- [ ] Audio begins at frame 0 and matches the trimmed master WAV
+- [ ] Master audio sits on A1; any embedded render audio is linked to the video clip on A2
+- [ ] Shots appear in order from `shot1` to `shotN` with no black filler gaps
+- [ ] Blue marker pins span the full hook window and align with transient peaks
+- [ ] Sequence name and revision metadata are visible in the XML root and clip metadata
 
-Click OK to proceed.
+If any clips show as **Media Offline**:
 
----
-
-## 5. Post-import verification checklist
-
-Run through this checklist on the Edit page:
-
-- [ ] Timeline ruler ends at exactly `00:00:40:00` (960 frames)
-- [ ] Audio track begins at frame 0 and matches the trimmed master audio file
-- [ ] Master audio is on A1; embedded render audio, when present, is linked to its video clip on A2
-- [ ] Video shots appear in order from `shot1` to `shotN` with no black filler gaps
-- [ ] Blue marker pins span the full hook window and align to transient peaks
-- [ ] Sequence name and revision metadata are present in the XML root and clip metadata
+1. Open the **Media Pool**.
+2. Select the affected clips.
+3. Right-click and choose **Relink Selected Clips**.
+4. Point Resolve to the render directory or output folder as needed.
+5. Confirm the relink.
 
 ---
 
-## 6. Troubleshooting unlinked media
+## 7. Final delivery / export settings
 
-If any clips show Media Offline:
+When the edit is approved, export the completed cut from the **Deliver** page (`Shift + 8`):
 
-1. Open the Media Pool.
-2. Select all affected clips.
-3. Right-click > Relink Selected Clips.
-4. Point the browser to the renders directory or output folder as needed.
-5. Click OK.
+- Format: `MP4`
+- Codec: `H.264`
+- Resolution: `1920 x 1080 HD`
+- Frame rate: `24`
+- Audio: `AAC 320 Kbps` or `Linear PCM`
 
----
-
-## 7. Master render and delivery settings
-
-When editing and color finishing are complete:
-
-1. Go to the Deliver page (`Shift + 8`).
-2. Set Custom Export:
-   - Format: `MP4`
-   - Codec: `H.264`
-   - Resolution: `1920 x 1080 HD`
-   - Frame rate: `24`
-   - Audio: `AAC 320 Kbps` or `Linear PCM`
-3. Add to render queue and render all.
+Add to the render queue and render all.
 
 ---
 
-## 8. Runtime expectations
+## 8. Release verification checklist
 
-The current HMS v3.13 workflow expects:
+The current tag-triggered GitHub Actions workflow builds the executable, portable ZIP, installer, wheel, and source archive and checks that expected files exist. It does not run repository regression tests, launch the packaged executable, smoke-test the wheel install path, or import a generated timeline into Resolve. The workflow publishes a non-draft release directly from a version tag; it does not provide a staged candidate review.
 
-- a valid master audio source
-- a render directory with sequential clips
-- `ffprobe` available in PATH
-- a correctly generated `output/<slug>_davinci_timeline.xml`
+Before creating a release tag, close these validation gaps against the exact candidate commit and artifacts:
 
-This SOP is the standard import path for resolving the generated timeline safely in DaVinci Resolve Free.
-The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
+- Run `python -m unittest discover -s tests -v` and record the outcome.
+- On a clean Windows environment, launch the packaged EXE and smoke-test the CLI/GUI paths, including dry run and verify-only.
+- Install and import the built wheel; inspect the portable ZIP and installer contents and confirm version labels match the tag.
+- Exercise include/exclude ordering and a custom output directory with representative media.
+- Complete a restore drill using a disposable run with both pre-existing output files and renamed clips; confirm the restore returns each item to its prior state.
+- Keep the working-directory `rollback/` folder available for recovery, but exclude it from source and release artifacts; test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
+- Import the generated XML and relink media in the current production Resolve version before release approval.
 
-## 9. Run history and recovery
+These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.13. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
 
-HMS stores each complete or failed pipeline run under `rollback/run_NNN/`, with its manifest, shot rename map, and backups of output files that existed before the run. Use the GUI's **ROLLBACK LAST RUN** or **RESTORE RUN...** controls, or run `python hms_v31_patcher.py --rollback` / `--restore run_NNN`. Restore is safety-checked and stops if required renamed shots or backups are missing, or if restoring an original filename would overwrite another file.
-
-Before running, set **Include Clips** to the exact names or filename patterns for the hook shots (for example `shot_2a*, shot_2b*`). Exact filenames are processed in the order entered, which can be used to order UUID-named clips explicitly. You can set **Exclude Clips** to additional comma-separated patterns; files that do not match an include pattern or match an exclude pattern are left untouched. A blank include list blocks renaming and timeline generation.
-
-Use the GUI's **DRY RUN** checkbox or run the command with `--dry-run`, explicit audio/renders/slug arguments, and one or more `--include` patterns to inspect the operations without changing files. The dry-run guard applies to individual steps as well as the complete pipeline. **VERIFY ONLY** checks existing output and timeline integrity without rewriting it.
+---
