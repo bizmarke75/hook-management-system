@@ -139,7 +139,7 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
         return False
     print(f"[INFO] Audio track duration confirmed: {a_dur} frames (40.000s @ 24fps).")
 
-    # Verify media paths and linked source audio on the second audio lane.
+    # Verify the master WAV and preserve validation for legacy linked shot audio.
     audio_url = audio_clip.findtext(".//file/pathurl")
     if audio_url:
         parsed_audio = urllib.parse.urlparse(audio_url)
@@ -176,8 +176,8 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
             if link.findtext("mediatype") == "audio"
         }
         source_has_audio = video_clip.find("./file/media/audio") is not None
-        if source_has_audio != bool(audio_link_ids):
-            print(f"[ERROR] Embedded audio stream/link mismatch for video clip '{video_id}'.")
+        if audio_link_ids and not source_has_audio:
+            print(f"[ERROR] Video clip '{video_id}' links audio but has no embedded audio stream.")
             return False
         if len(audio_link_ids) > 1:
             print(f"[ERROR] Video clip '{video_id}' has multiple linked source-audio clips.")

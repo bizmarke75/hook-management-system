@@ -1,6 +1,6 @@
 @echo off
 setlocal
-echo Building HMS v3.14...
+echo Building HMS v3.15...
 python build_exe.py
 if errorlevel 1 (
     echo [ERROR] Build failed.

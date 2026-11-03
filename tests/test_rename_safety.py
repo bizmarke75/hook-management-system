@@ -406,6 +406,74 @@ class ShotRenameSafetyTests(unittest.TestCase):
         self.assertEqual(thread.call_args.kwargs["args"], (str(audio), 1))
         thread.return_value.start.assert_called_once()
 
+    def test_selecting_render_directory_prompts_for_included_clips(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        renders = self.renders / "renders"
+        renders.mkdir()
+        clip = renders / "shot_2a.mp4"
+        clip.write_bytes(b"video")
+        gui = object.__new__(HMSMasterGUI)
+        gui.renders_var = Value("old-renders")
+        gui.include_var = Value("old-clip.mp4")
+
+        with (
+            patch("hms_master_gui.filedialog.askdirectory", return_value=str(renders)),
+            patch(
+                "hms_master_gui.filedialog.askopenfilenames",
+                return_value=(str(clip),),
+            ) as choose_files,
+        ):
+            gui._browse_renders()
+
+        self.assertEqual(gui.renders_var.get(), str(renders.resolve()))
+        self.assertEqual(gui.include_var.get(), "shot_2a.mp4")
+        self.assertEqual(
+            choose_files.call_args.kwargs["initialdir"],
+            str(renders.resolve()),
+        )
+
+    def test_choose_render_clips_rejects_files_outside_render_directory(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value=""):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        renders = self.renders / "renders"
+        renders.mkdir()
+        other_dir = self.renders / "other"
+        other_dir.mkdir()
+        outside_clip = other_dir / "shot.mp4"
+        outside_clip.write_bytes(b"video")
+        gui = object.__new__(HMSMasterGUI)
+        gui.renders_var = Value(str(renders))
+        gui.include_var = Value("")
+
+        with patch(
+            "hms_master_gui.filedialog.askopenfilenames",
+            return_value=(str(outside_clip),),
+        ):
+            gui._choose_render_clips()
+
+        self.assertEqual(gui.include_var.get(), "")
+
     def test_audio_slug_avoids_duplicate_master_suffix(self):
         self.assertEqual(
             derive_slug_from_audio("C:\\audio\\Project_Master.wav"),
@@ -564,15 +632,15 @@ class ShotRenameSafetyTests(unittest.TestCase):
         }
         video_metadata = {
             "has_video": True,
-            "has_audio": False,
+            "has_audio": True,
             "duration": 10.0,
             "width": 1920,
             "height": 1080,
             "fps": "24",
-            "audio_duration": 0.0,
-            "samplerate": 0,
-            "channels": 0,
-            "depth": 0,
+            "audio_duration": 10.0,
+            "samplerate": 48000,
+            "channels": 2,
+            "depth": 16,
         }
 
         with patch(
@@ -594,6 +662,20 @@ class ShotRenameSafetyTests(unittest.TestCase):
         self.assertTrue(
             master_clip.findtext("file/pathurl").endswith("track_master_trimmed.wav")
         )
+        audio_tracks = root.findall("./sequence/media/audio/track")
+        self.assertEqual(len(audio_tracks), 1)
+        video_clip = root.find("./sequence/media/video/track/clipitem")
+        self.assertIsNotNone(video_clip)
+        self.assertIsNotNone(video_clip.find("./file/media/audio"))
+        self.assertFalse(
+            any(
+                link.findtext("mediatype") == "audio"
+                for link in video_clip.findall("link")
+            )
+        )
+        from hms_v31_patcher import verify_davinci_xml
+
+        self.assertTrue(verify_davinci_xml(str(xml_path)))
 
 
 if __name__ == "__main__":
