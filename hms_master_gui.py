@@ -378,6 +378,34 @@ def _frame_distribution_by_duration(
     return allocations
 
 
+def _full_song_video_frame_distribution(
+    total_duration: float,
+    fps: int,
+    metadata: Sequence[dict],
+) -> list[int]:
+    target_frames = int(round(total_duration * fps))
+    source_frames = [
+        max(1, int(round(float(item.get("duration", 0)) * fps)))
+        for item in metadata
+    ]
+    available_frames = sum(source_frames)
+    if available_frames < target_frames:
+        available_duration = available_frames / fps
+        raise ValueError(
+            f"Selected video clips provide about {available_duration:.2f}s of footage, "
+            f"but the full song needs {total_duration:.2f}s. Add more video shots/files "
+            "before running the full-song video workflow."
+        )
+
+    allocations = []
+    remaining_frames = target_frames
+    for clip_frames in source_frames:
+        allocation = min(clip_frames, remaining_frames)
+        allocations.append(allocation)
+        remaining_frames -= allocation
+    return allocations
+
+
 # ==============================================================================
 # THREAD-SAFE CONSOLE REDIRECTOR
 # ==============================================================================
@@ -422,7 +450,7 @@ def run_step_0_audio_analysis(
     output_dir: str | Path | None = None,
     full_song: bool = False,
 ) -> dict:
-    """Find a hook window, or analyze the whole song for full-length image mode."""
+    """Find a hook window, or analyze the whole song for a full-length timeline."""
     dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
@@ -446,7 +474,7 @@ def run_step_0_audio_analysis(
         if window_duration <= 0:
             raise ValueError("The selected audio duration is too short for a full-song timeline.")
         hook_start_s = 0.0
-        print(f"[INFO] Full-song image mode: using the complete {total_duration:.3f}s track.")
+        print(f"[INFO] Full-song mode: using the complete {total_duration:.3f}s track.")
     else:
         print(f"[INFO] Computing RMS energy curve across {window_duration}s window...")
         frame_length = 2048
@@ -678,6 +706,7 @@ def run_step_4_generate_davinci_xml(
     dry_run: bool = False,
     output_dir: str | Path | None = None,
     selected_files: Sequence[str | Path] | None = None,
+    full_song_video: bool = False,
 ) -> Path:
     """Generates a valid FCP7-compatible XML timeline using real media metadata."""
     dry_run = dry_run or is_dry_run()
@@ -719,7 +748,14 @@ def run_step_4_generate_davinci_xml(
             metadata["fps"] = str(fps)
             metadata["duration"] = 0.01
 
-    frame_alloc = _frame_distribution_by_duration(video_files, total_duration, fps, video_metadata)
+    if full_song_video:
+        frame_alloc = _full_song_video_frame_distribution(
+            total_duration, fps, video_metadata
+        )
+    else:
+        frame_alloc = _frame_distribution_by_duration(
+            video_files, total_duration, fps, video_metadata
+        )
     print(f"[INFO] Clip frame distribution: {frame_alloc}")
 
     root = ET.Element("xmeml", version="5")
@@ -760,8 +796,13 @@ def run_step_4_generate_davinci_xml(
     ET.SubElement(track, "locked").text = "FALSE"
     current_frame = 0
 
+    clip_index = 0
     for idx, (v_file, video_meta) in enumerate(zip(video_files, video_metadata)):
         clip_dur = frame_alloc[idx]
+        if clip_dur <= 0:
+            print(f"[INFO] Skipping {v_file.name}; the full-song timeline already ends.")
+            continue
+        clip_index += 1
         start_frame = current_frame
         end_frame = current_frame + clip_dur
         current_frame = end_frame
@@ -774,8 +815,8 @@ def run_step_4_generate_davinci_xml(
         source_frames = max(1, int(round(source_duration * actual_source_fps)))
         source_clip_frames = max(1, int(round((clip_dur / fps) * actual_source_fps)))
         file_url = _file_path_url(v_file)
-        video_clip_id = f"video-{idx + 1}"
-        file_id = f"file-shot-{idx + 1}"
+        video_clip_id = f"video-{clip_index}"
+        file_id = f"file-shot-{clip_index}"
 
         clip_item = ET.SubElement(track, "clipitem", {"id": video_clip_id})
         ET.SubElement(clip_item, "name").text = v_file.name
@@ -810,7 +851,7 @@ def run_step_4_generate_davinci_xml(
         source_track = ET.SubElement(clip_item, "sourcetrack")
         ET.SubElement(source_track, "mediatype").text = "video"
         ET.SubElement(source_track, "trackindex").text = "1"
-        _append_clip_link(clip_item, video_clip_id, "video", 1, idx + 1)
+        _append_clip_link(clip_item, video_clip_id, "video", 1, clip_index)
         print(
             f"[INFO] {v_file.name}: {video_meta['width']}x{video_meta['height']} "
             f"@ {video_meta['fps']} fps; embedded audio: "
@@ -885,8 +926,6 @@ def dry_run_pipeline(
     _validate_audio_analysis_size(audio_file)
     _validate_bpm(target_bpm)
     duration = _validate_duration(duration)
-    if full_song and not image_only:
-        raise ValueError("Full-song mode is available only for image-only lyric videos.")
     extensions = IMAGE_EXTENSIONS if image_only else VIDEO_EXTENSIONS
     video_files = select_render_files(
         render_root, include_patterns, exclude_patterns, extensions
@@ -899,6 +938,14 @@ def dry_run_pipeline(
     if full_song:
         duration = _validate_duration(audio_metadata["duration"])
         duration = math.floor(duration * 1000) / 1000
+    media_metadata = [probe_media(video_file) for video_file in video_files]
+    if full_song and not image_only:
+        for video_file, metadata in zip(video_files, media_metadata):
+            if not metadata["has_video"] or metadata.get("duration", 0) <= 0:
+                raise ValueError(
+                    f"Full-song video mode requires valid video footage: {video_file.name}"
+                )
+        _full_song_video_frame_distribution(duration, 24, media_metadata)
     if subtitle_path:
         subtitle_file = Path(subtitle_path).expanduser().resolve()
         if not subtitle_file.is_file() or subtitle_file.suffix.lower() != ".srt":
@@ -906,15 +953,19 @@ def dry_run_pipeline(
         _render_srt_sidecar(subtitle_file, 0.0, audio_metadata["duration"])
 
     output_dir = _resolve_output_dir(output_dir)
-    pipeline_mode = "image-only full-song" if full_song else (
-        "image-only hook" if image_only else "standard hook video"
+    pipeline_mode = (
+        "image-only full-song" if full_song and image_only
+        else "full-song video" if full_song
+        else "image-only hook" if image_only
+        else "standard hook video"
     )
     print(f"[DRY-RUN] Mode: {pipeline_mode}.")
     print(f"[DRY-RUN] Track: {slug}; target BPM: {target_bpm:g}; duration: {duration:g}s.")
     print(f"[DRY-RUN] Master audio: {audio_file.name}.")
     print(f"[DRY-RUN] Found {len(video_files)} source media file(s):")
-    for index, video_file in enumerate(video_files, start=1):
-        metadata = probe_media(video_file)
+    for index, (video_file, metadata) in enumerate(
+        zip(video_files, media_metadata), start=1
+    ):
         if not metadata["has_video"]:
             raise ValueError(f"Render does not contain a video stream: {video_file.name}")
         is_still = video_file.suffix.lower() in IMAGE_EXTENSIONS
@@ -953,9 +1004,8 @@ def execute_pipeline(
 ) -> Path | None:
     output_path = _resolve_output_dir(output_dir)
     dry_run = dry_run or is_dry_run()
-    if full_song and not image_only:
-        raise ValueError("Full-song mode is available only for image-only lyric videos.")
     if full_song:
+        _validate_audio_analysis_size(Path(audio_path).expanduser().resolve())
         audio_metadata = probe_media(audio_path)
         if not audio_metadata["has_audio"]:
             raise ValueError(f"No audio stream found in master audio: {audio_path}")
@@ -981,6 +1031,14 @@ def execute_pipeline(
     selected_files = select_render_files(
         renders_path, include_patterns, exclude_patterns, extensions
     )
+    if full_song and not image_only:
+        video_metadata = [probe_media(video_file) for video_file in selected_files]
+        for video_file, metadata in zip(selected_files, video_metadata):
+            if not metadata["has_video"] or metadata.get("duration", 0) <= 0:
+                raise ValueError(
+                    f"Full-song video mode requires valid video footage: {video_file.name}"
+                )
+        _full_song_video_frame_distribution(duration, 24, video_metadata)
     if not image_only:
         _build_rename_map(renders_path, selected_files)
     store = RollbackStore()
@@ -1032,6 +1090,7 @@ def execute_pipeline(
             total_duration=duration,
             output_dir=output_path,
             selected_files=timeline_files,
+            full_song_video=full_song and not image_only,
         )
         beats_file = output_path / f"{slug}_thebeats.txt"
         marker_count = sum(bool(line.strip()) for line in beats_file.read_text(encoding="utf-8").splitlines())
@@ -1251,7 +1310,7 @@ class HMSMasterGUI(tk.Tk):
             "Image-only Lyric Video",
         ).pack(side="left", padx=(4, 12))
         tk.Label(
-            workflow_frame, text="Image duration:", bg=self.bg_color, fg=self.fg_color,
+            workflow_frame, text="Timeline duration:", bg=self.bg_color, fg=self.fg_color,
             font=("Consolas", 9),
         ).pack(side="left")
         self.image_duration_var = tk.StringVar(value="Hook")
@@ -1568,8 +1627,7 @@ class HMSMasterGUI(tk.Tk):
             )
             duration_mode_var = self.__dict__.get("image_duration_var")
             full_song = (
-                image_only
-                and duration_mode_var is not None
+                duration_mode_var is not None
                 and duration_mode_var.get() == "Full song"
             )
             subtitles_var = self.__dict__.get("subtitles_var")
@@ -1653,8 +1711,7 @@ class HMSMasterGUI(tk.Tk):
             )
             duration_mode_var = self.__dict__.get("image_duration_var")
             full_song = (
-                image_only
-                and duration_mode_var is not None
+                duration_mode_var is not None
                 and duration_mode_var.get() == "Full song"
             )
             if step_idx == 0:
@@ -1705,6 +1762,7 @@ class HMSMasterGUI(tk.Tk):
                     dry_run=dry_run,
                     output_dir=output_dir,
                     selected_files=selected_files,
+                    full_song_video=full_song and not image_only,
                 )
         except Exception as e:
             print(f"[ERROR] Step {step_idx} execution error: {str(e)}")

@@ -2,9 +2,17 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [Unreleased]
+
+> Experimental testing only.
+
+### Added
+- Add full-song video timelines that play selected clips once at natural speed, trim the last clip at the song end, and require enough footage to cover the audio.
+- Add `--full-song` CLI support for full-length video timelines.
+
 ## [v3.16-experimental.1] - 2026-11-03
 
-> Very experimental testing release. The image-only lyric/comic-video and SRT workflow is not production-ready and has not been validated in DaVinci Resolve.
+> Very experimental testing release. The image-only lyric/comic-video and SRT workflow is not production-ready.
 
 ### Added
 - Add an image-only lyric-video workflow for ordered JPEG/PNG stills, supporting hook-length or full-source-audio timelines.
