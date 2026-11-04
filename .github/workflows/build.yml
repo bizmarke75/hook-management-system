@@ -120,9 +120,9 @@ jobs:
             dist/HMS_*_Portable.zip
             dist/HMS_*_Setup.exe
             dist/python/*
-          name: "Hook Management System ${{ github.ref_name }}"
+          name: "Hook Management System ${{ github.ref_name }}${{ contains(github.ref_name, '-experimental.') && ' (Experimental Testing)' || '' }}"
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-experimental.') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

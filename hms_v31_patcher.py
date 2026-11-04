@@ -12,7 +12,7 @@ from hms_safety import LEGACY_MASTER_AUDIO_SUFFIX, MASTER_AUDIO_SUFFIX
 def verify_davinci_xml(xml_path_str: str) -> bool:
     """
     Audits timeline XML schema, gapless video continuity, audio integrity,
-    and transient marker frame boundaries for 24fps / 960 frame conformance.
+    and transient marker frame boundaries against the sequence duration.
     """
     xml_path = Path(xml_path_str).resolve()
     print(f"[RUN] Auditing timeline XML: {xml_path}")
@@ -39,6 +39,14 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
         print(f"[ERROR] Timebase mismatch: Expected 24 fps, found {fps} fps.")
         return False
     print(f"[INFO] Timebase confirmed: {fps} fps.")
+    try:
+        sequence_frames = int(root.findtext("./sequence/duration", "0").strip())
+    except ValueError:
+        print("[ERROR] Invalid sequence duration.")
+        return False
+    if sequence_frames <= 0:
+        print("[ERROR] Sequence duration must be positive.")
+        return False
 
     # 2. Video Track & Gapless Continuity Check
     video_tracks = root.findall("./sequence/media/video/track")
@@ -105,10 +113,13 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
 
         current_timeline_frame = end_frame
 
-    if current_timeline_frame != 960:
-        print(f"[ERROR] Total video frame count mismatch: Expected exactly 960 frames (40.0s), got {current_timeline_frame}")
+    if current_timeline_frame != sequence_frames:
+        print(
+            f"[ERROR] Total video frame count mismatch: expected {sequence_frames} "
+            f"frames from the sequence, got {current_timeline_frame}."
+        )
         return False
-    print(f"[INFO] Video continuity verified: 0 to 960 frames (gapless).")
+    print(f"[INFO] Video continuity verified: 0 to {sequence_frames} frames (gapless).")
 
     # 3. Audio Track Validation
     master_audio_clips = audio_tracks[0].findall("clipitem")
@@ -134,10 +145,16 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
         print(f"[ERROR] Invalid integer for audio duration node: '{raw_dur}'")
         return False
 
-    if a_dur != 960:
-        print(f"[ERROR] Audio duration mismatch: Expected 960 frames, found {a_dur}")
+    if a_dur != sequence_frames:
+        print(
+            f"[ERROR] Audio duration mismatch: expected {sequence_frames} frames, "
+            f"found {a_dur}."
+        )
         return False
-    print(f"[INFO] Audio track duration confirmed: {a_dur} frames (40.000s @ 24fps).")
+    print(
+        f"[INFO] Audio track duration confirmed: {a_dur} frames "
+        f"({a_dur / fps:.3f}s @ {fps}fps)."
+    )
 
     # Verify the master WAV and preserve validation for legacy linked shot audio.
     audio_url = audio_clip.findtext(".//file/pathurl")
@@ -234,14 +251,20 @@ def verify_davinci_xml(xml_path_str: str) -> bool:
                 print(f"[ERROR] Invalid marker frame value: '{m_in_txt}'")
                 return False
 
-            if m_in < 0 or m_in >= 960:
+            if m_in < 0 or m_in >= sequence_frames:
                 out_of_bounds += 1
 
         if out_of_bounds > 0:
-            print(f"[ERROR] {out_of_bounds} marker(s) fall outside the 960-frame timeline window.")
+            print(
+                f"[ERROR] {out_of_bounds} marker(s) fall outside the "
+                f"{sequence_frames}-frame timeline window."
+            )
             return False
 
-        print(f"[INFO] Marker audit: {len(markers)} transient pins verified within 0 <= frame < 960.")
+        print(
+            f"[INFO] Marker audit: {len(markers)} transient pins verified within "
+            f"0 <= frame < {sequence_frames}."
+        )
 
     print("[SUCCESS] XML timeline verification passed with zero schema or continuity errors.")
     return True

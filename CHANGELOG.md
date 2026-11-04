@@ -2,6 +2,16 @@
 
 All notable changes to the Hook Management System (HMS) project will be documented in this file.
 
+## [v3.16-experimental.1] - 2026-11-03
+
+> Very experimental testing release. The image-only lyric/comic-video and SRT workflow is not production-ready and has not been validated in DaVinci Resolve.
+
+### Added
+- Add an image-only lyric-video workflow for ordered JPEG/PNG stills, supporting hook-length or full-source-audio timelines.
+- Add optional timed SRT subtitle sidecars, clipping and retiming cues to the hook window when needed.
+- Validate FCP 7 XML timing and audio duration against the actual sequence length for image-only timelines.
+- Include optional SRT sidecars in run backups and rollback restoration.
+
 ## [v3.15] - 2026-11-03
 
 ### Added
@@ -42,8 +52,6 @@ All notable changes to the Hook Management System (HMS) project will be document
 
 ### Changed
 - Update application and package labels for HMS v3.13.
-
-## [Unreleased]
 
 ## [v3.12] - 2026-10-26
 

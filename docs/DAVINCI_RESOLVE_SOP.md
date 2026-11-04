@@ -1,12 +1,14 @@
 # 337 West Productions — HMS Operator Runbook
 
 **Document ID:** SOP-HMS-001
-**Project:** Hook Management System (HMS) v3.15
+**Project:** Hook Management System (HMS) v3.16 Experimental
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 10/11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
-**Timeline Standard:** Source-derived video resolution | 24.0 fps | 40.000s (960 frames exact)
+**Timeline Standard:** Source-derived resolution | 24.0 fps | 40.000s hook by default; image-only timelines may use the full source-audio duration
 
 This runbook covers the daily production workflow: set up the project, run HMS, verify the generated sequence, import it into DaVinci Resolve, and recover or correct a failed run. It keeps the final delivery/export settings in the same guide so operators can move seamlessly from generation to final export.
+
+> **VERY EXPERIMENTAL — TESTING ONLY:** The image-only lyric/comic-video and SRT workflow is not production-ready and has not been validated in Resolve. Back up source media, inspect the generated timeline, and import subtitle sidecars separately.
 
 ---
 
@@ -24,15 +26,19 @@ This runbook covers the daily production workflow: set up the project, run HMS, 
 Before opening Resolve, confirm that HMS generated the expected files in the selected output folder:
 
 - `<slug>_davinci_timeline.xml` — Final Cut Pro 7 interchange XML (`xmeml` v5), imported into Resolve as a timeline
-- `<slug>_master_trimmed.wav` — trimmed 24-bit PCM WAV for the hook window
+- `<slug>_master_trimmed.wav` — 24-bit PCM WAV for the selected hook or full-song duration
 - `<slug>_thebeats.txt` — transient beat timestamps
-- `shot1` through `shotN` — the final ordered render clips, retaining their source extensions
+- `shot1` through `shotN` — the final ordered video renders, retaining their source extensions; image-only mode references selected stills without renaming them
+- `<slug>_subtitles.srt` — optional timed captions, imported into Resolve separately from the XML
 
 If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`, use that folder instead of the default `output/` location for the timeline, trimmed master WAV, and beat files. Selecting a new master WAV estimates its BPM into the GUI's **Target BPM** field; verify or adjust the estimate as needed. When HMS derives the slug, it removes recognized trailing master/trimmed suffixes from the source filename to avoid duplicated master-name segments in outputs.
 
 ### Project and file safety checks
 
 - Choose the intended video clips from the file picker after selecting the render directory, or use **Choose Files** to revise the selection.
+- **Experimental testing only:** for an image-only lyric/comic-book timeline, select **Image-only Lyric Video** and choose JPEG/PNG stills; their selected order is used and source images are not renamed.
+- Choose **Hook** or **Full song** for image-only duration. Full-song mode starts from the beginning and uses the complete source audio, up to 600 seconds.
+- Optional: enable **Include SRT subtitles** and select a timed SubRip `.srt` file. HMS clips/retimes cues for a hook or keeps full-song timing.
 - Confirm the include list is not blank; HMS blocks blank include patterns before generating or renaming output.
 - Use `--exclude` or **Exclude Clips** for optional filename patterns that should be skipped.
 - Use **DRY RUN** or `--dry-run` before a production run when you are validating selection or ordering.
@@ -46,10 +52,11 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 1. Open `hms_master_gui.py`.
 2. Select the master audio file and render directory.
 3. Set the output folder if needed.
-4. Choose the exact shot files in the picker that opens after selecting the render directory; use **Choose Files** to revise the selection. You may instead type filenames or wildcard patterns in **Include Clips**.
+4. Choose **Standard Hook Video** for video renders, or **Image-only Lyric Video** for a still-image sequence. Select the intended files in the picker that opens after choosing the renders directory; use **Choose Files** to revise the selection.
 5. Add optional exclude patterns if some selected clips should be ignored.
-6. Run with **Dry Run** enabled to preview the planned operations; review the log and selection.
-7. When the preview is correct, disable **Dry Run**, run again, and review the log output.
+6. For image-only timelines, choose **Hook** or **Full song**. If subtitles are desired, enable **Include SRT subtitles** and select a timed `.srt` file.
+7. Run with **Dry Run** enabled to preview the planned operations; review the log and selection.
+8. When the preview is correct, disable **Dry Run**, run again, and review the log output.
 
 ### CLI workflow
 
@@ -128,9 +135,10 @@ Then click **OK**.
 
 Use the Edit page and confirm all of the following:
 
-- [ ] Timeline ruler ends at `00:00:40:00` (960 frames)
+- [ ] Standard hook timeline ruler ends at `00:00:40:00` (960 frames), or at the selected image-only duration
 - [ ] Audio begins at frame 0 and matches the trimmed master WAV
 - [ ] Trimmed master audio sits on A1; embedded render audio is muted and no shot-audio clips appear on A2
+- [ ] If an SRT sidecar was generated, import it into Resolve as a separate subtitle track and confirm cue timing
 - [ ] Shots appear in order from `shot1` to `shotN` with no black filler gaps
 - [ ] Blue marker pins span the full hook window and align with transient peaks
 - [ ] Sequence name and revision metadata are visible in the XML root and clip metadata
@@ -173,6 +181,6 @@ Before creating a release tag, close these validation gaps against the exact can
 - Keep the working-directory `rollback/` folder available for recovery, but exclude it from source and release artifacts; test recovery when a backup or destination is missing or occupied. The app restore covers run outputs and clip renames; it is not a documented rollback mechanism for published installers or releases.
 - Import the generated XML and relink media in the current production Resolve version before release approval.
 
-These are release gates for a packaged HMS build, not claims that all of them have already passed for v3.15. The current manual validation note remains: the FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12.
+These are release gates for a packaged HMS build, not claims that all of them have passed for v3.16. The v3.16 still-image and subtitle workflows have only been exercised with generated test media, not in DaVinci Resolve. The last manual Resolve validation note is for the FCP 7 XML import workflow in HMS v3.12.
 
 ---

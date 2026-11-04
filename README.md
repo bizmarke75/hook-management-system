@@ -1,6 +1,8 @@
 # Hook Management System (HMS)
 
-Version: v3.15
+Version: v3.16 Experimental (testing only)
+
+> **VERY EXPERIMENTAL — TESTING ONLY.** The image-only lyric/comic-video and SRT workflow in this release is an early test feature. Expect rough edges; do not rely on it for production deliveries. Keep source media and projects backed up, inspect the generated timeline in Resolve, and import the `.srt` separately. It has not been validated in Resolve.
 
 Automated Python pipeline and desktop GUI for syncing AI-generated music stems, transient beat markers, and video shots into DaVinci Resolve using FCP 7 XML interchange.
 
@@ -84,7 +86,7 @@ This generates a Windows executable in the `dist` directory.
 Install the wheel attached to a GitHub Release with Python 3.10 or later:
 
 ```powershell
-python -m pip install .\hook_management_system-3.15.0-py3-none-any.whl
+python -m pip install .\hook_management_system-3.16.0-py3-none-any.whl
 hms
 ```
 
@@ -94,7 +96,8 @@ The Python package includes the HMS GUI and CLI modules. It requires `ffprobe` o
 
 The GUI includes a dry-run checkbox, a verify-only action, and controls to roll back the latest run or restore a specific run. Run manifests, rename maps, and overwritten-output backups are stored under `rollback/`.
 Use the GUI's **Output Dir** field to choose where generated hook timestamps, beat markers, the trimmed WAV, and timeline XML are saved. By default, files go to `output/` in the current working directory. The trimmed file is named `<slug>_master_trimmed.wav`; the timeline XML is `<slug>_davinci_timeline.xml`. Run history and recovery backups remain under the project-level `rollback/` folder.
-Choose the **Renders Dir** and select the intended clips in the file picker, or use **Choose Files** to revise that selection. HMS fills **Include Clips** with those filenames; you can also enter exact filenames or wildcards manually. **Exclude Clips** remains optional for additional filename/glob exclusions. Only selected/matching video clips are processed, and an empty include field blocks the operation. Review the dry-run preview before renaming.
+**Experimental, testing only:** Choose **Standard Hook Video** to keep the current video-clip workflow. For a comic-book or lyric slideshow, choose **Image-only Lyric Video**, then select JPEG/PNG stills; HMS keeps the source image filenames and distributes them in the selected order across the chosen hook or full-song duration. Full-song mode uses the complete source audio (up to the current 600-second timeline limit), while Hook mode uses the configured hook window.
+Optionally select **Include SRT subtitles** and choose a timed `.srt` file. HMS writes a `<slug>_subtitles.srt` sidecar, clipping and retiming cues to the selected hook when needed. Import that sidecar as a separate subtitle track in Resolve; subtitles are not embedded in the FCP 7 XML. LRC is not supported yet. For standard hook video, the include picker still selects video clips; **Exclude Clips** remains optional.
 When you select a new master audio file with **Browse Audio**, HMS estimates its BPM in the background and updates **Target BPM** for that file. The complete-pipeline and Step 0 buttons stay disabled until estimation finishes, and the worker checks again before starting. You can edit the estimate before running. If estimation fails, HMS visibly warns and uses the 170 BPM default rather than keeping a previous track's value. A source already named with a trailing `_master`, `_master_audio`, `_master_trimmed`, or `_trimmed` suffix has that suffix removed when HMS derives its track slug, preventing duplicate master-name segments.
 
 The command-line utility supports recovery and batch execution:
@@ -131,7 +134,7 @@ Start here for the day-to-day production flow:
 - [`docs/DAVINCI_RESOLVE_SOP.md`](docs/DAVINCI_RESOLVE_SOP.md) — concise operator runbook for HMS execution, Resolve import, verification, recovery, and final export
 - [`docs/EDITOR_ONBOARDING.md`](docs/EDITOR_ONBOARDING.md) — onboarding guide for new editors/operators
 
-The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12; v3.15 verification is not documented. The tag-triggered workflow runs regression tests and builds release packages, but does not smoke-test the packaged outputs or import a generated timeline into Resolve. Complete the runbook's **Release verification checklist** against the candidate before creating a release tag.
+The FCP 7 XML import workflow was manually verified in DaVinci Resolve for HMS v3.12; v3.16 image and subtitle workflows have only been exercised with generated test media, not Resolve. The tag-triggered workflow runs regression tests and builds release packages, but does not smoke-test packaged outputs or import a generated timeline into Resolve.
 
 ## Changelog
 
