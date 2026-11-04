@@ -326,6 +326,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slug", help="track slug used for output names")
     parser.add_argument("--bpm", type=float, default=170.0)
     parser.add_argument("--duration", type=float, default=40.0)
+    parser.add_argument(
+        "--full-song",
+        action="store_true",
+        help="build a full-song timeline (video clips play once at natural speed and must cover the song)",
+    )
     return parser
 
 
@@ -348,12 +353,18 @@ def dispatch_cli(args, gui_factory=None):
         or args.output_dir
         or args.include_patterns
         or args.exclude_patterns
+        or args.full_song
     ):
         raise ValueError(
             "Rollback, restore, and list-runs cannot be combined with pipeline arguments."
         )
     if args.verify and (
-        args.audio or args.renders or args.slug or args.include_patterns or args.exclude_patterns
+        args.audio
+        or args.renders
+        or args.slug
+        or args.include_patterns
+        or args.exclude_patterns
+        or args.full_song
     ):
         raise ValueError("--verify cannot be combined with pipeline arguments.")
     if args.list_runs:
@@ -386,8 +397,8 @@ def dispatch_cli(args, gui_factory=None):
         print(f"[SUCCESS] Restored run {manifest['run_id']}.")
         return True
     if args.verify_only:
-        if args.audio:
-            raise ValueError("--verify-only does not accept --audio.")
+        if args.audio or args.full_song:
+            raise ValueError("--verify-only does not accept --audio or --full-song.")
         if args.include_patterns or args.exclude_patterns:
             raise ValueError("--verify-only does not accept clip include/exclude patterns.")
         if not args.slug:
@@ -407,6 +418,7 @@ def dispatch_cli(args, gui_factory=None):
         or args.slug
         or args.include_patterns
         or args.exclude_patterns
+        or args.full_song
     )
     if args.dry_run or cli_run_requested:
         if not args.audio or not args.renders or not args.slug:
@@ -427,6 +439,7 @@ def dispatch_cli(args, gui_factory=None):
             output_dir=args.output_dir,
             include_patterns=args.include_patterns,
             exclude_patterns=args.exclude_patterns,
+            full_song=args.full_song,
         )
         return True
     return False

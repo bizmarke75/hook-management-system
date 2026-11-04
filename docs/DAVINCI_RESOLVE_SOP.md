@@ -4,11 +4,11 @@
 **Project:** Hook Management System (HMS) v3.16 Experimental
 **Target Platform:** DaVinci Resolve Free (v18.x / v19.x+) on Windows 10/11
 **Interchange Format:** Apple Final Cut Pro 7 XML (`xmeml v5`)
-**Timeline Standard:** Source-derived resolution | 24.0 fps | 40.000s hook by default; image-only timelines may use the full source-audio duration
+**Timeline Standard:** Source-derived resolution | 24.0 fps | 40.000s hook by default; full-song timelines may use the full source-audio duration
 
 This runbook covers the daily production workflow: set up the project, run HMS, verify the generated sequence, import it into DaVinci Resolve, and recover or correct a failed run. It keeps the final delivery/export settings in the same guide so operators can move seamlessly from generation to final export.
 
-> **VERY EXPERIMENTAL — TESTING ONLY:** The image-only lyric/comic-video and SRT workflow is not production-ready and has not been validated in Resolve. Back up source media, inspect the generated timeline, and import subtitle sidecars separately.
+> **VERY EXPERIMENTAL — TESTING ONLY:** The image-only lyric/comic-video, full-song video, and SRT workflows are not production-ready. Back up source media, inspect generated timelines, and import subtitle sidecars separately.
 
 ---
 
@@ -37,7 +37,7 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 
 - Choose the intended video clips from the file picker after selecting the render directory, or use **Choose Files** to revise the selection.
 - **Experimental testing only:** for an image-only lyric/comic-book timeline, select **Image-only Lyric Video** and choose JPEG/PNG stills; their selected order is used and source images are not renamed.
-- Choose **Hook** or **Full song** for image-only duration. Full-song mode starts from the beginning and uses the complete source audio, up to 600 seconds.
+- Choose **Hook** or **Full song** for the timeline. Full-song mode starts at the beginning and uses the complete source audio, up to 600 seconds. For video clips, selected shots play once at natural speed in order; the final clip is trimmed to the song end. If the selected footage is too short, HMS stops before renaming anything and asks for more shots/files. For still images, HMS distributes the images across the timeline.
 - Optional: enable **Include SRT subtitles** and select a timed SubRip `.srt` file. HMS clips/retimes cues for a hook or keeps full-song timing.
 - Confirm the include list is not blank; HMS blocks blank include patterns before generating or renaming output.
 - Use `--exclude` or **Exclude Clips** for optional filename patterns that should be skipped.
@@ -54,7 +54,7 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 3. Set the output folder if needed.
 4. Choose **Standard Hook Video** for video renders, or **Image-only Lyric Video** for a still-image sequence. Select the intended files in the picker that opens after choosing the renders directory; use **Choose Files** to revise the selection.
 5. Add optional exclude patterns if some selected clips should be ignored.
-6. For image-only timelines, choose **Hook** or **Full song**. If subtitles are desired, enable **Include SRT subtitles** and select a timed `.srt` file.
+6. Choose **Hook** or **Full song**. Full-song video mode uses each selected clip once at natural speed and requires enough footage to cover the audio; add more shots/files if HMS reports insufficient duration. For still-image timelines, selected images are distributed across the chosen duration. If subtitles are desired, enable **Include SRT subtitles** and select a timed `.srt` file.
 7. Run with **Dry Run** enabled to preview the planned operations; review the log and selection.
 8. When the preview is correct, disable **Dry Run**, run again, and review the log output.
 
@@ -63,12 +63,14 @@ If a custom **Output Dir** is chosen in the HMS GUI or passed via `--output-dir`
 ```powershell
 python hms_v31_patcher.py --dry-run --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*" --exclude "*_final*" --output-dir "D:\HMS\output"
 python hms_v31_patcher.py --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "shot_2a*" --include "shot_2b*" --output-dir "D:\HMS\output"
+python hms_v31_patcher.py --audio "C:\audio\track.wav" --renders "C:\renders" --slug track --include "*.mp4" --full-song
 python hms_v31_patcher.py --verify-only --slug track --renders "C:\renders" --output-dir "D:\HMS\output"
 ```
 
 Important notes:
 
 - Exact filenames are processed in the order entered.
+- `--full-song` uses the full audio duration. For video clips, selected footage must cover the song; clips play once at natural speed and the final clip is trimmed at the song end.
 - Unmatched files are left untouched.
 - The dry-run guard applies to individual steps as well as the full pipeline.
 - `--verify-only` checks output integrity without rewriting files.
@@ -135,7 +137,7 @@ Then click **OK**.
 
 Use the Edit page and confirm all of the following:
 
-- [ ] Standard hook timeline ruler ends at `00:00:40:00` (960 frames), or at the selected image-only duration
+- [ ] Standard hook timeline ruler ends at `00:00:40:00` (960 frames), or at the selected full-song duration
 - [ ] Audio begins at frame 0 and matches the trimmed master WAV
 - [ ] Trimmed master audio sits on A1; embedded render audio is muted and no shot-audio clips appear on A2
 - [ ] If an SRT sidecar was generated, import it into Resolve as a separate subtitle track and confirm cue timing

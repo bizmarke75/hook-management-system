@@ -1,6 +1,6 @@
 # HMS Editor / Operator Onboarding
 
-> **Experimental testing only:** Image-only lyric/comic-book timelines and SRT sidecars are early test features in HMS v3.16. Do not rely on them for production delivery; keep backups and verify generated output in Resolve.
+> **Experimental testing only:** Image-only lyric/comic-book timelines, full-song video timelines, and SRT sidecars are early test features in HMS v3.16. Do not rely on them for production delivery; keep backups and verify generated output in Resolve.
 
 This guide is for new operators and editors working with the HMS pipeline for the first time: prepare media, run HMS safely, confirm the generated timeline, and know how to recover.
 
@@ -34,7 +34,7 @@ python hms_master_gui.py
 ```
 
 4. Pick the master audio file and render directory. Choose **Standard Hook Video** for clips or **Image-only Lyric Video** for a JPEG/PNG slideshow.
-5. Select the intended files in the picker that opens; use **Choose Files** to revise the selection. For image mode, choose hook or full-song length. Add excludes only if needed.
+5. Select the intended files in the picker that opens; use **Choose Files** to revise the selection. Choose hook or full-song length. Full-song video mode plays selected clips once at natural speed; make sure your shots cover the song, adding more files if needed. Still images are distributed across the duration. Add excludes only if needed.
 6. Optionally enable **Include SRT subtitles** and choose a timed `.srt` file; import the generated subtitle sidecar into Resolve separately.
 7. Set `--output-dir` or the GUI output folder if you are not writing to the default `output/` path.
 8. Start with **Dry Run** enabled.

@@ -810,6 +810,8 @@ class LyricImageVideoTests(unittest.TestCase):
         output.mkdir()
         image = renders / "comic-page.png"
         image.write_bytes(b"image")
+        audio = self.root / "master.wav"
+        audio.write_bytes(b"audio")
         beats = output / "track_thebeats.txt"
 
         def write_analysis_files(*args, output_dir=None, **kwargs):
@@ -839,7 +841,7 @@ class LyricImageVideoTests(unittest.TestCase):
         ):
             rollback_store.return_value.begin_run.return_value = "run_001"
             execute_pipeline(
-                "master.wav",
+                str(audio),
                 str(renders),
                 "track",
                 output_dir=output,
@@ -856,6 +858,177 @@ class LyricImageVideoTests(unittest.TestCase):
         self.assertEqual(xml_generator.call_args.kwargs["selected_files"], [image])
         self.assertTrue(image.is_file())
         self.assertTrue(beats.is_file())
+
+    def test_full_song_video_uses_clips_once_and_trims_the_final_clip(self):
+        output = self.root / "output"
+        renders = self.root / "renders"
+        output.mkdir()
+        renders.mkdir()
+        clips = [renders / name for name in ("shot1.mp4", "shot2.mp4", "shot3.mp4")]
+        for clip in clips:
+            clip.write_bytes(b"video")
+        (output / f"track{MASTER_AUDIO_SUFFIX}").write_bytes(b"audio")
+        (output / "track_thebeats.txt").write_text("", encoding="utf-8")
+        audio_metadata = {
+            "has_audio": True,
+            "duration": 40.0,
+            "samplerate": 48000,
+            "channels": 2,
+            "depth": 24,
+        }
+        video_metadata = [
+            {
+                "has_video": True,
+                "has_audio": False,
+                "duration": duration,
+                "width": 1920,
+                "height": 1080,
+                "fps": "24",
+                "samplerate": 48000,
+                "channels": 2,
+                "depth": 16,
+            }
+            for duration in (10.0, 15.0, 20.0)
+        ]
+
+        with patch(
+            "hms_master_gui.probe_media",
+            side_effect=[audio_metadata, *video_metadata],
+        ):
+            xml_path = run_step_4_generate_davinci_xml(
+                "track",
+                str(renders),
+                total_duration=40.0,
+                output_dir=output,
+                selected_files=clips,
+                full_song_video=True,
+            )
+
+        from hms_v31_patcher import verify_davinci_xml
+
+        root = ET.parse(xml_path).getroot()
+        timeline_clips = root.findall("./sequence/media/video/track/clipitem")
+        self.assertEqual(root.findtext("./sequence/duration"), "960")
+        self.assertEqual(
+            [clip.findtext("name") for clip in timeline_clips],
+            [clip.name for clip in clips],
+        )
+        self.assertEqual(
+            [
+                (clip.findtext("start"), clip.findtext("end"), clip.findtext("out"))
+                for clip in timeline_clips
+            ],
+            [("0", "240", "240"), ("240", "600", "360"), ("600", "960", "360")],
+        )
+        self.assertTrue(verify_davinci_xml(str(xml_path)))
+
+    def test_full_song_video_requires_more_footage_before_renaming(self):
+        renders = self.root / "renders"
+        output = self.root / "output"
+        renders.mkdir()
+        output.mkdir()
+        audio = self.root / "master.wav"
+        audio.write_bytes(b"audio")
+        clip = renders / "short.mp4"
+        clip.write_bytes(b"video")
+
+        with (
+            patch(
+                "hms_master_gui.probe_media",
+                side_effect=[
+                    {"has_audio": True, "duration": 20.0},
+                    {"has_video": True, "duration": 5.0},
+                ],
+            ),
+            patch("hms_master_gui.RollbackStore") as rollback_store,
+            patch("hms_master_gui.run_step_1_shot_renamer") as renamer,
+        ):
+            with self.assertRaisesRegex(ValueError, "Add more video shots/files"):
+                execute_pipeline(
+                    str(audio),
+                    str(renders),
+                    "track",
+                    output_dir=output,
+                    include_patterns=["*.mp4"],
+                    full_song=True,
+                )
+
+        rollback_store.return_value.begin_run.assert_not_called()
+        renamer.assert_not_called()
+        self.assertEqual(clip.read_bytes(), b"video")
+
+    def test_full_song_video_pipeline_passes_full_song_timeline_mode(self):
+        renders = self.root / "renders"
+        output = self.root / "output"
+        renders.mkdir()
+        output.mkdir()
+        audio = self.root / "master.wav"
+        audio.write_bytes(b"audio")
+        clip = renders / "shot.mp4"
+        clip.write_bytes(b"video")
+
+        def write_analysis_files(*args, output_dir=None, **kwargs):
+            output_path = Path(output_dir)
+            (output_path / "track_hooktimestamp.txt").write_text(
+                "0.000\n120.000\n120.000\n", encoding="utf-8"
+            )
+            (output_path / "track_thebeats.txt").write_text("", encoding="utf-8")
+            return {"duration": 120.0}
+
+        with (
+            patch(
+                "hms_master_gui.probe_media",
+                side_effect=[
+                    {"has_audio": True, "duration": 120.0},
+                    {"has_video": True, "duration": 120.0},
+                ],
+            ),
+            patch("hms_master_gui.RollbackStore") as rollback_store,
+            patch(
+                "hms_master_gui.run_step_0_audio_analysis",
+                side_effect=write_analysis_files,
+            ) as analysis,
+            patch(
+                "hms_master_gui.run_step_1_shot_renamer",
+                return_value=[clip],
+            ),
+            patch("hms_master_gui.run_step_2_audio_trimmer"),
+            patch("hms_master_gui.run_step_3_sync_metadata"),
+            patch(
+                "hms_master_gui.run_step_4_generate_davinci_xml",
+                return_value=output / "track_davinci_timeline.xml",
+            ) as xml_generator,
+        ):
+            rollback_store.return_value.begin_run.return_value = "run_001"
+            execute_pipeline(
+                str(audio),
+                str(renders),
+                "track",
+                output_dir=output,
+                include_patterns=["*.mp4"],
+                full_song=True,
+            )
+
+        self.assertTrue(analysis.call_args.kwargs["full_song"])
+        self.assertEqual(xml_generator.call_args.kwargs["total_duration"], 120.0)
+        self.assertTrue(xml_generator.call_args.kwargs["full_song_video"])
+
+    def test_cli_full_song_flag_enables_video_full_song_mode(self):
+        from hms_v31_patcher import build_argument_parser, dispatch_cli
+
+        args = build_argument_parser().parse_args(
+            [
+                "--audio", "master.wav",
+                "--renders", "renders",
+                "--slug", "track",
+                "--include", "*.mp4",
+                "--full-song",
+            ]
+        )
+        with patch("hms_master_gui.execute_pipeline") as pipeline:
+            self.assertTrue(dispatch_cli(args))
+
+        self.assertTrue(pipeline.call_args.kwargs["full_song"])
 
     def test_rollback_restores_preexisting_subtitle_sidecar(self):
         output = self.root / "output"
