@@ -1,6 +1,6 @@
 """
 Hook Management System (HMS) - Executable Compiler
-Version: 3.15 | 337 West Productions
+Version: 3.16 EXPERIMENTAL | 337 West Productions
 """
 import subprocess
 import sys
@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def build():
-    print("[BUILD] Compiling HMS Master GUI v3.15...")
+    print("[BUILD] Compiling HMS Master GUI v3.16 EXPERIMENTAL...")
     spec_file = Path("hms_master_gui.spec")
     
     if not spec_file.exists():

@@ -1,5 +1,5 @@
 """
-337 West Productions - Hook Management System (HMS) v3.15
+337 West Productions - Hook Management System (HMS) v3.16 Experimental
 Module: hms_master_gui.py
 Architecture: Tkinter Dark UI | SoundFile 24-bit Trimmer | Librosa Beat Tracker
 Target: DaVinci Resolve Free 24fps FCP 7 XML (xmeml v5) Interchange
@@ -29,6 +29,7 @@ from hms_safety import (
     LEGACY_MASTER_AUDIO_SUFFIX,
     MASTER_AUDIO_SUFFIX,
     RollbackStore,
+    SUBTITLE_SUFFIX,
     is_dry_run,
     set_dry_run,
 )
@@ -43,6 +44,8 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 MAX_ANALYSIS_FILE_MB = 512
 DEFAULT_TARGET_BPM = 170.0
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+SUPPORTED_RENDER_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 # ==============================================================================
@@ -104,6 +107,92 @@ def parse_file_patterns(value: str) -> list[str]:
     return [pattern.strip() for pattern in re.split(r"[,;\n]", value) if pattern.strip()]
 
 
+def _parse_srt_timestamp(value: str) -> int:
+    match = re.fullmatch(r"(\d{2}):([0-5]\d):([0-5]\d)[,.](\d{3})", value.strip())
+    if not match:
+        raise ValueError(f"Invalid SRT timestamp: {value!r}")
+    hours, minutes, seconds, milliseconds = map(int, match.groups())
+    return (((hours * 60 + minutes) * 60 + seconds) * 1000) + milliseconds
+
+
+def _format_srt_timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
+    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+
+
+def _render_srt_sidecar(
+    source_path: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+) -> str:
+    """Return SRT cues clipped and retimed to a timeline segment."""
+    source = Path(source_path).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() != ".srt":
+        raise ValueError(f"Subtitle file must be an existing .srt file: {source}")
+
+    content = source.read_text(encoding="utf-8-sig")
+    segment_start = max(0, int(round(start_seconds * 1000)))
+    segment_end = segment_start + int(round(duration_seconds * 1000))
+    cues = []
+    for block in re.split(r"\r?\n\s*\r?\n", content.strip()):
+        lines = block.splitlines()
+        timing_index = next(
+            (index for index, line in enumerate(lines) if "-->" in line), None
+        )
+        if timing_index is None:
+            raise ValueError("Invalid SRT file: each subtitle block needs a timing line.")
+        timing = re.fullmatch(
+            r"\s*(\S+)\s*-->\s*(\S+)(?:\s+.*)?", lines[timing_index]
+        )
+        if timing is None:
+            raise ValueError(f"Invalid SRT timing line: {lines[timing_index]!r}")
+        cue_start, cue_end = (
+            _parse_srt_timestamp(timing.group(1)),
+            _parse_srt_timestamp(timing.group(2)),
+        )
+        if cue_end <= cue_start:
+            raise ValueError("Invalid SRT cue: end time must be after start time.")
+        text = "\n".join(lines[timing_index + 1 :]).strip()
+        if not text:
+            raise ValueError("Invalid SRT cue: subtitle text is empty.")
+        clipped_start = max(cue_start, segment_start)
+        clipped_end = min(cue_end, segment_end)
+        if clipped_end > clipped_start:
+            cues.append(
+                (
+                    clipped_start - segment_start,
+                    clipped_end - segment_start,
+                    text,
+                )
+            )
+
+    if not cues:
+        raise ValueError("No SRT subtitle cues overlap the selected timeline duration.")
+
+    blocks = [
+        f"{index}\n{_format_srt_timestamp(start)} --> "
+        f"{_format_srt_timestamp(end)}\n{text}"
+        for index, (start, end, text) in enumerate(cues, start=1)
+    ]
+    return "\n\n".join(blocks) + "\n"
+
+
+def write_srt_sidecar(
+    source_path: str | Path,
+    output_path: str | Path,
+    start_seconds: float,
+    duration_seconds: float,
+) -> Path:
+    """Write SRT cues clipped and retimed to a timeline segment."""
+    content = _render_srt_sidecar(source_path, start_seconds, duration_seconds)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content, encoding="utf-8")
+    return output
+
+
 def derive_slug_from_audio(audio_path: str | Path) -> str:
     stem = Path(audio_path).stem
     for suffix in ("_master_trimmed", "_master_audio", "_trimmed", "_master"):
@@ -117,6 +206,7 @@ def select_render_files(
     renders_dir: str | Path,
     include_patterns: Sequence[str] | None,
     exclude_patterns: Sequence[str] | None = None,
+    extensions: set[str] | None = None,
 ) -> list[Path]:
     render_root = Path(renders_dir).expanduser().resolve()
     if not render_root.is_dir():
@@ -133,9 +223,10 @@ def select_render_files(
     if any("/" in pattern or "\\" in pattern for pattern in includes + excludes):
         raise ValueError("Clip include/exclude patterns must match file names, not paths.")
 
+    allowed_extensions = extensions or VIDEO_EXTENSIONS
     candidates = [
         path for path in render_root.iterdir()
-        if path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
+        if path.is_file() and path.suffix.lower() in allowed_extensions
     ]
     selected = []
     seen = set()
@@ -158,25 +249,28 @@ def select_render_files(
                 seen.add(identity)
     if not selected:
         raise ValueError(
-            f"No video clips matched include patterns {includes!r} "
+            f"No render media matched include patterns {includes!r} "
             f"(exclude patterns: {excludes!r}) in {render_root}."
         )
     return selected
 
 
 def _validate_selected_render_files(
-    renders_dir: str | Path, selected_files: Sequence[str | Path] | None
+    renders_dir: str | Path,
+    selected_files: Sequence[str | Path] | None,
+    extensions: set[str] | None = None,
 ) -> list[Path]:
     if not selected_files:
         raise ValueError("No shot clips were selected. Set include patterns before running this step.")
     render_root = Path(renders_dir).expanduser().resolve()
+    allowed_extensions = extensions or SUPPORTED_RENDER_EXTENSIONS
     selected = []
     seen = set()
     for selected_file in selected_files:
         path = Path(selected_file).expanduser().resolve()
         if path.parent != render_root:
             raise ValueError(f"Selected clip must be directly inside the renders folder: {path}")
-        if path.suffix.lower() not in VIDEO_EXTENSIONS or not path.is_file():
+        if path.suffix.lower() not in allowed_extensions or not path.is_file():
             raise ValueError(f"Selected clip is missing or has an unsupported format: {path}")
         identity = str(path).casefold()
         if identity not in seen:
@@ -326,8 +420,9 @@ def run_step_0_audio_analysis(
     window_duration: float = 40.0,
     dry_run: bool = False,
     output_dir: str | Path | None = None,
+    full_song: bool = False,
 ) -> dict:
-    """Detects the peak RMS energy 40.0s hook window and tracks beat transients."""
+    """Find a hook window, or analyze the whole song for full-length image mode."""
     dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 0: Analyzing audio dynamics and transient beat markers for '{slug}'...")
     audio_file = Path(audio_path).resolve()
@@ -342,21 +437,28 @@ def run_step_0_audio_analysis(
     total_duration = librosa.get_duration(y=y, sr=sr)
     print(f"[INFO] Audio loaded: {total_duration:.2f}s total duration @ {sr} Hz.")
 
-    if total_duration < window_duration:
+    if not full_song and total_duration < window_duration:
         raise ValueError(f"Audio duration ({total_duration:.2f}s) is shorter than target window ({window_duration}s).")
 
-    print(f"[INFO] Computing RMS energy curve across {window_duration}s window...")
-    frame_length = 2048
     hop_length = 512
-    rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
-    frames_per_sec = sr / hop_length
-    window_frames = int(window_duration * frames_per_sec)
+    if full_song:
+        window_duration = math.floor(total_duration * 1000) / 1000
+        if window_duration <= 0:
+            raise ValueError("The selected audio duration is too short for a full-song timeline.")
+        hook_start_s = 0.0
+        print(f"[INFO] Full-song image mode: using the complete {total_duration:.3f}s track.")
+    else:
+        print(f"[INFO] Computing RMS energy curve across {window_duration}s window...")
+        frame_length = 2048
+        rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
+        frames_per_sec = sr / hop_length
+        window_frames = int(window_duration * frames_per_sec)
 
-    window_kernel = np.ones(window_frames)
-    integrated_energy = np.convolve(rms, window_kernel, mode="valid")
+        window_kernel = np.ones(window_frames)
+        integrated_energy = np.convolve(rms, window_kernel, mode="valid")
 
-    best_frame_idx = int(np.argmax(integrated_energy))
-    hook_start_s = round(float(best_frame_idx / frames_per_sec), 3)
+        best_frame_idx = int(np.argmax(integrated_energy))
+        hook_start_s = round(float(best_frame_idx / frames_per_sec), 3)
     hook_end_s = round(hook_start_s + window_duration, 3)
     print(f"[SUCCESS] Hook window identified: {hook_start_s:.3f}s -> {hook_end_s:.3f}s ({window_duration:.1f}s window)")
 
@@ -422,7 +524,9 @@ def run_step_1_shot_renamer(
     dry_run = dry_run or is_dry_run()
     print(f"\n[RUN] Step 1: Auditing and standardizing render clips in '{renders_dir}'...")
     r_path = Path(renders_dir).resolve()
-    video_files = _validate_selected_render_files(r_path, selected_files)
+    video_files = _validate_selected_render_files(
+        r_path, selected_files, VIDEO_EXTENSIONS
+    )
     print(f"[INFO] Selected {len(video_files)} shot clip(s); other files will be left untouched.")
 
     rename_map = _build_rename_map(r_path, video_files)
@@ -600,14 +704,20 @@ def run_step_4_generate_davinci_xml(
     print(f"[INFO] Timeline duration: {total_duration:.3f}s | FPS: {fps} | Total Frames: {total_frames}")
 
     r_path = Path(renders_dir).resolve()
-    video_files = _validate_selected_render_files(r_path, selected_files)
+    video_files = _validate_selected_render_files(
+        r_path, selected_files, SUPPORTED_RENDER_EXTENSIONS
+    )
 
     video_metadata = [probe_media(video_file) for video_file in video_files]
     for video_file, metadata in zip(video_files, video_metadata):
         if not metadata["has_video"]:
             raise ValueError(f"Render does not contain a video stream: {video_file.name}")
-        if metadata["duration"] <= 0:
+        is_still = video_file.suffix.lower() in IMAGE_EXTENSIONS
+        if metadata["duration"] <= 0 and not is_still:
             raise ValueError(f"ffprobe did not report the video duration: {video_file.name}")
+        if is_still:
+            metadata["fps"] = str(fps)
+            metadata["duration"] = 0.01
 
     frame_alloc = _frame_distribution_by_duration(video_files, total_duration, fps, video_metadata)
     print(f"[INFO] Clip frame distribution: {frame_alloc}")
@@ -656,8 +766,11 @@ def run_step_4_generate_davinci_xml(
         end_frame = current_frame + clip_dur
         current_frame = end_frame
 
-        source_fps, source_ntsc, actual_source_fps = _fcpxml_rate(video_meta["fps"])
-        source_duration = video_meta["duration"] or clip_dur / fps
+        is_still = v_file.suffix.lower() in IMAGE_EXTENSIONS
+        source_fps, source_ntsc, actual_source_fps = _fcpxml_rate(
+            fps if is_still else video_meta["fps"]
+        )
+        source_duration = clip_dur / fps if is_still else video_meta["duration"]
         source_frames = max(1, int(round(source_duration * actual_source_fps)))
         source_clip_frames = max(1, int(round((clip_dur / fps) * actual_source_fps)))
         file_url = _file_path_url(v_file)
@@ -762,6 +875,9 @@ def dry_run_pipeline(
     output_dir: str | Path | None = None,
     include_patterns: Sequence[str] | None = None,
     exclude_patterns: Sequence[str] | None = None,
+    image_only: bool = False,
+    full_song: bool = False,
+    subtitle_path: str | Path | None = None,
 ) -> None:
     """Validate and print a pipeline plan without changing source or output files."""
     audio_file = Path(audio_path).resolve()
@@ -769,28 +885,52 @@ def dry_run_pipeline(
     _validate_audio_analysis_size(audio_file)
     _validate_bpm(target_bpm)
     duration = _validate_duration(duration)
-    video_files = select_render_files(render_root, include_patterns, exclude_patterns)
-    rename_map = _build_rename_map(render_root, video_files)
+    if full_song and not image_only:
+        raise ValueError("Full-song mode is available only for image-only lyric videos.")
+    extensions = IMAGE_EXTENSIONS if image_only else VIDEO_EXTENSIONS
+    video_files = select_render_files(
+        render_root, include_patterns, exclude_patterns, extensions
+    )
+    rename_map = [] if image_only else _build_rename_map(render_root, video_files)
 
     audio_metadata = probe_media(audio_file)
     if not audio_metadata["has_audio"]:
         raise ValueError(f"No audio stream found in master audio: {audio_file}")
+    if full_song:
+        duration = _validate_duration(audio_metadata["duration"])
+        duration = math.floor(duration * 1000) / 1000
+    if subtitle_path:
+        subtitle_file = Path(subtitle_path).expanduser().resolve()
+        if not subtitle_file.is_file() or subtitle_file.suffix.lower() != ".srt":
+            raise ValueError(f"Subtitle file must be an existing .srt file: {subtitle_file}")
+        _render_srt_sidecar(subtitle_file, 0.0, audio_metadata["duration"])
 
     output_dir = _resolve_output_dir(output_dir)
+    pipeline_mode = "image-only full-song" if full_song else (
+        "image-only hook" if image_only else "standard hook video"
+    )
+    print(f"[DRY-RUN] Mode: {pipeline_mode}.")
     print(f"[DRY-RUN] Track: {slug}; target BPM: {target_bpm:g}; duration: {duration:g}s.")
     print(f"[DRY-RUN] Master audio: {audio_file.name}.")
-    print(f"[DRY-RUN] Found {len(video_files)} source shot(s):")
+    print(f"[DRY-RUN] Found {len(video_files)} source media file(s):")
     for index, video_file in enumerate(video_files, start=1):
         metadata = probe_media(video_file)
         if not metadata["has_video"]:
             raise ValueError(f"Render does not contain a video stream: {video_file.name}")
-        target_name = rename_map[index - 1]["new"]
+        is_still = video_file.suffix.lower() in IMAGE_EXTENSIONS
+        if not is_still and metadata.get("duration", 0) <= 0:
+            raise ValueError(f"ffprobe did not report the video duration: {video_file.name}")
+        target_name = (
+            video_file.name if image_only else rename_map[index - 1]["new"]
+        )
         print(
-            f"[DRY-RUN] Rename {video_file.name} -> {target_name}; "
-            f"{metadata['width']}x{metadata['height']} @ {metadata['fps']} fps; "
-            f"embedded audio: {'yes' if metadata['has_audio'] else 'no'}."
+            f"[DRY-RUN] {'Use still' if is_still else 'Use video'} {target_name}; "
+            f"{metadata['width']}x{metadata['height']}; "
+            f"embedded audio: {'muted' if metadata['has_audio'] else 'none'}."
         )
     for suffix in RollbackStore.OUTPUT_SUFFIXES:
+        if suffix == SUBTITLE_SUFFIX and not subtitle_path:
+            continue
         destination = output_dir / f"{slug}{suffix}"
         action = "backup and replace" if destination.exists() else "create"
         print(f"[DRY-RUN] Would {action} {destination}")
@@ -807,9 +947,21 @@ def execute_pipeline(
     output_dir: str | Path | None = None,
     include_patterns: Sequence[str] | None = None,
     exclude_patterns: Sequence[str] | None = None,
+    image_only: bool = False,
+    full_song: bool = False,
+    subtitle_path: str | Path | None = None,
 ) -> Path | None:
     output_path = _resolve_output_dir(output_dir)
     dry_run = dry_run or is_dry_run()
+    if full_song and not image_only:
+        raise ValueError("Full-song mode is available only for image-only lyric videos.")
+    if full_song:
+        audio_metadata = probe_media(audio_path)
+        if not audio_metadata["has_audio"]:
+            raise ValueError(f"No audio stream found in master audio: {audio_path}")
+        duration = _validate_duration(audio_metadata["duration"])
+
+    extensions = IMAGE_EXTENSIONS if image_only else VIDEO_EXTENSIONS
     if dry_run:
         dry_run_pipeline(
             audio_path,
@@ -820,32 +972,57 @@ def execute_pipeline(
             output_path,
             include_patterns,
             exclude_patterns,
+            image_only,
+            full_song,
+            subtitle_path,
         )
         return None
 
-    selected_files = select_render_files(renders_path, include_patterns, exclude_patterns)
-    _build_rename_map(renders_path, selected_files)
+    selected_files = select_render_files(
+        renders_path, include_patterns, exclude_patterns, extensions
+    )
+    if not image_only:
+        _build_rename_map(renders_path, selected_files)
     store = RollbackStore()
     run_id = store.begin_run(slug, audio_path, renders_path, output_path)
     print(f"[INFO] Generated files will be saved in: {output_path}")
     print(f"[INFO] Recovery manifest created: rollback/{run_id}/manifest.json")
     try:
         print(f"\nSTARTING HMS MASTER PIPELINE: {slug.upper()} ({run_id})")
-        run_step_0_audio_analysis(
+        analysis_result = run_step_0_audio_analysis(
             audio_path,
             slug,
             target_bpm=bpm,
             window_duration=duration,
             output_dir=output_path,
+            full_song=full_song,
         )
-        renamed_files = run_step_1_shot_renamer(
-            renders_path,
-            slug,
-            rename_map_callback=lambda mapping, state: store.set_rename_map(
-                run_id, mapping, state
-            ),
-            selected_files=selected_files,
-        )
+        if full_song and analysis_result:
+            duration = analysis_result["duration"]
+        if subtitle_path:
+            hook_start = 0.0
+            if not full_song:
+                hook_file = output_path / f"{slug}_hooktimestamp.txt"
+                hook_start = float(
+                    hook_file.read_text(encoding="utf-8").splitlines()[0]
+                )
+            write_srt_sidecar(
+                subtitle_path,
+                output_path / f"{slug}_subtitles.srt",
+                hook_start,
+                duration,
+            )
+        if image_only:
+            timeline_files = selected_files
+        else:
+            timeline_files = run_step_1_shot_renamer(
+                renders_path,
+                slug,
+                rename_map_callback=lambda mapping, state: store.set_rename_map(
+                    run_id, mapping, state
+                ),
+                selected_files=selected_files,
+            )
         run_step_2_audio_trimmer(audio_path, slug, output_dir=output_path)
         run_step_3_sync_metadata(slug, output_path)
         xml_path = run_step_4_generate_davinci_xml(
@@ -854,7 +1031,7 @@ def execute_pipeline(
             fps=24,
             total_duration=duration,
             output_dir=output_path,
-            selected_files=renamed_files,
+            selected_files=timeline_files,
         )
         beats_file = output_path / f"{slug}_thebeats.txt"
         marker_count = sum(bool(line.strip()) for line in beats_file.read_text(encoding="utf-8").splitlines())
@@ -874,6 +1051,8 @@ def verify_pipeline_outputs(
     renders_dir: str | None = None,
     duration: float = 40.0,
     output_dir: str | Path | None = None,
+    image_only: bool = False,
+    include_subtitles: bool = False,
 ) -> bool:
     """Check generated files and validate the existing XML without modifying them."""
     duration = _validate_duration(duration)
@@ -889,6 +1068,9 @@ def verify_pipeline_outputs(
         master_wav,
         output_dir / f"{slug}_davinci_timeline.xml",
     ]
+    subtitle_file = output_dir / f"{slug}_subtitles.srt"
+    if include_subtitles:
+        required.append(subtitle_file)
     missing = [path for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -899,21 +1081,23 @@ def verify_pipeline_outputs(
         renders_path = Path(renders_dir).resolve()
         if not renders_path.is_dir():
             raise NotADirectoryError(f"Renders folder does not exist: {renders_path}")
+        expected_extensions = IMAGE_EXTENSIONS if image_only else VIDEO_EXTENSIONS
         if not any(
             path.is_file()
-            and path.suffix.lower() in VIDEO_EXTENSIONS
-            and path.name.casefold().startswith("shot")
+            and path.suffix.lower() in expected_extensions
+            and (image_only or path.name.casefold().startswith("shot"))
             for path in renders_path.iterdir()
         ):
-            raise FileNotFoundError(f"No sequenced shot clips found in {renders_path}")
+            media_type = "image" if image_only else "sequenced shot clips"
+            raise FileNotFoundError(f"No {media_type} media found in {renders_path}")
 
     from hms_v31_patcher import verify_davinci_xml
 
-    xml_path = required[-1]
-    if duration != 40.0:
-        raise ValueError("The current timeline verifier requires a 40-second timeline.")
+    xml_path = output_dir / f"{slug}_davinci_timeline.xml"
     if not verify_davinci_xml(str(xml_path)):
         raise RuntimeError(f"Timeline verification failed: {xml_path}")
+    if include_subtitles and not subtitle_file.is_file():
+        raise FileNotFoundError(f"Missing generated subtitle sidecar: {subtitle_file}")
     print(f"[SUCCESS] Existing pipeline outputs verified: {slug}")
     return True
 
@@ -952,7 +1136,7 @@ class HMSMasterGUI(tk.Tk):
         self._audio_selection_generation = 0
         self._bpm_estimation_pending = False
         self._pipeline_running = False
-        self.title("Hook Management System (HMS) v3.15 - 337 West Productions")
+        self.title("HMS v3.16 EXPERIMENTAL - 337 West Productions")
         self.geometry("960x780")
         self.minsize(800, 600)
 
@@ -970,7 +1154,7 @@ class HMSMasterGUI(tk.Tk):
             sys.stdout = SafeLogRedirector(self.console_text, sys.__stdout__)
             sys.stderr = SafeLogRedirector(self.console_text, sys.__stderr__)
 
-        print("[INFO] Hook Management System (HMS) v3.15 initialized.")
+        print("[WARNING] HMS v3.16 EXPERIMENTAL TEST BUILD - test only; not production-ready.")
         print("[INFO] Environment: 24.0 fps | 1080p | 40.000s timeline standard.")
 
     def _setup_styles(self):
@@ -981,7 +1165,7 @@ class HMSMasterGUI(tk.Tk):
         style.configure("Header.TLabel", font=("Consolas", 12, "bold"), foreground=self.accent_color)
 
     def _create_widgets(self):
-        header = ttk.Label(self, text="HMS v3.15 :: AUTOMATED DAVINCI RESOLVE INTERCHANGE", style="Header.TLabel")
+        header = ttk.Label(self, text="HMS v3.16 EXPERIMENTAL :: TESTING ONLY", style="Header.TLabel")
         header.pack(pady=(12, 6))
 
         param_frame = tk.LabelFrame(self, text=" Project Configuration ", bg=self.bg_color, fg=self.accent_color, font=("Consolas", 10, "bold"))
@@ -1053,8 +1237,50 @@ class HMSMasterGUI(tk.Tk):
             font=("Consolas", 8),
         ).grid(row=4, column=2, sticky="w", padx=6, pady=4)
 
+        workflow_frame = tk.Frame(param_frame, bg=self.bg_color)
+        workflow_frame.grid(row=5, column=0, columnspan=3, sticky="w", padx=8, pady=4)
+        tk.Label(
+            workflow_frame, text="Workflow:", bg=self.bg_color, fg=self.fg_color,
+            font=("Consolas", 9),
+        ).pack(side="left")
+        self.media_mode_var = tk.StringVar(value="Standard Hook Video")
+        tk.OptionMenu(
+            workflow_frame,
+            self.media_mode_var,
+            "Standard Hook Video",
+            "Image-only Lyric Video",
+        ).pack(side="left", padx=(4, 12))
+        tk.Label(
+            workflow_frame, text="Image duration:", bg=self.bg_color, fg=self.fg_color,
+            font=("Consolas", 9),
+        ).pack(side="left")
+        self.image_duration_var = tk.StringVar(value="Hook")
+        tk.OptionMenu(
+            workflow_frame,
+            self.image_duration_var,
+            "Hook",
+            "Full song",
+        ).pack(side="left", padx=(4, 12))
+        self.subtitles_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            workflow_frame,
+            text="Include SRT subtitles",
+            variable=self.subtitles_var,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            selectcolor=self.panel_color,
+        ).pack(side="left")
+        tk.Button(
+            workflow_frame,
+            text="Choose SRT",
+            command=self._browse_subtitles,
+            bg=self.btn_bg,
+            fg=self.fg_color,
+        ).pack(side="left", padx=6)
+        self.subtitle_var = tk.StringVar(value="")
+
         meta_subframe = tk.Frame(param_frame, bg=self.bg_color)
-        meta_subframe.grid(row=5, column=0, columnspan=3, sticky="w", padx=8, pady=6)
+        meta_subframe.grid(row=6, column=0, columnspan=3, sticky="w", padx=8, pady=6)
 
         tk.Label(meta_subframe, text="Track Slug:", bg=self.bg_color, fg=self.fg_color, font=("Consolas", 9)).pack(side="left")
         self.slug_var = tk.StringVar(value="paper_dolls")
@@ -1169,6 +1395,16 @@ class HMSMasterGUI(tk.Tk):
                 daemon=True,
             ).start()
 
+    def _browse_subtitles(self) -> None:
+        file_path = filedialog.askopenfilename(
+            title="Select timed subtitle file",
+            filetypes=[("SubRip subtitles", "*.srt"), ("All Files", "*.*")],
+        )
+        if file_path:
+            self.subtitle_var.set(file_path)
+            self.subtitles_var.set(True)
+            print(f"[INFO] SRT subtitles selected: {Path(file_path).name}")
+
     def _estimate_bpm_worker(self, audio_path: str, generation: int) -> None:
         try:
             tempo = estimate_audio_bpm(audio_path)
@@ -1242,11 +1478,15 @@ class HMSMasterGUI(tk.Tk):
         if not render_root.is_dir():
             print(f"[ERROR] Renders folder does not exist: {render_root}")
             return
+        mode_var = self.__dict__.get("media_mode_var")
+        image_mode = mode_var is not None and mode_var.get() == "Image-only Lyric Video"
         selected_paths = filedialog.askopenfilenames(
-            title="Select video clips to include",
+            title="Select still images to include" if image_mode else "Select video clips to include",
             initialdir=str(render_root),
             filetypes=[
-                ("Video clips", "*.mp4 *.mov *.mkv"),
+                ("Still images", "*.jpg *.jpeg *.png")
+                if image_mode
+                else ("Video clips", "*.mp4 *.mov *.mkv"),
                 ("All files", "*.*"),
             ],
         )
@@ -1258,19 +1498,20 @@ class HMSMasterGUI(tk.Tk):
             path
             for path in selected_files
             if path.parent != render_root
-            or path.suffix.lower() not in VIDEO_EXTENSIONS
+            or path.suffix.lower()
+            not in (IMAGE_EXTENSIONS if image_mode else VIDEO_EXTENSIONS)
             or not path.is_file()
         ]
         if invalid_files:
             print(
-                "[ERROR] Select only video files directly inside the chosen renders folder: "
+                "[ERROR] Select only supported media files directly inside the chosen renders folder: "
                 + ", ".join(str(path) for path in invalid_files)
             )
             return
 
         self.include_var.set(", ".join(path.name for path in selected_files))
         print(
-            f"[INFO] Selected {len(selected_files)} render clip(s) for inclusion: "
+            f"[INFO] Selected {len(selected_files)} render file(s) for inclusion: "
             + ", ".join(path.name for path in selected_files)
         )
 
@@ -1320,6 +1561,27 @@ class HMSMasterGUI(tk.Tk):
                 print("[ERROR] Please select a master audio file.")
                 return
 
+            media_mode_var = self.__dict__.get("media_mode_var")
+            image_only = (
+                media_mode_var is not None
+                and media_mode_var.get() == "Image-only Lyric Video"
+            )
+            duration_mode_var = self.__dict__.get("image_duration_var")
+            full_song = (
+                image_only
+                and duration_mode_var is not None
+                and duration_mode_var.get() == "Full song"
+            )
+            subtitles_var = self.__dict__.get("subtitles_var")
+            subtitle_var = self.__dict__.get("subtitle_var")
+            subtitle_path = None
+            if subtitles_var is not None and subtitles_var.get():
+                if subtitle_var is None or not subtitle_var.get().strip():
+                    raise ValueError(
+                        "Choose an SRT subtitle file or turn off Include SRT subtitles."
+                    )
+                subtitle_path = subtitle_var.get().strip()
+
             xml_path = execute_pipeline(
                 audio_path,
                 renders_path,
@@ -1330,9 +1592,17 @@ class HMSMasterGUI(tk.Tk):
                 output_dir=output_dir,
                 include_patterns=include_patterns,
                 exclude_patterns=exclude_patterns,
+                image_only=image_only,
+                full_song=full_song,
+                subtitle_path=subtitle_path,
             )
             if xml_path:
                 print("Ready for DaVinci Resolve import (Ctrl + Shift + I).")
+                if subtitle_path:
+                    print(
+                        "Import the generated _subtitles.srt as a separate subtitle "
+                        "track in Resolve; subtitles are not embedded in FCP 7 XML."
+                    )
 
         except Exception as e:
             print(f"[ERROR] Pipeline failed: {str(e)}")
@@ -1376,9 +1646,34 @@ class HMSMasterGUI(tk.Tk):
             slug = self.slug_var.get().strip()
             bpm = _validate_bpm(self.bpm_var.get().strip())
             duration = _validate_duration(self.duration_var.get().strip())
+            mode_var = self.__dict__.get("media_mode_var")
+            image_only = (
+                mode_var is not None
+                and mode_var.get() == "Image-only Lyric Video"
+            )
+            duration_mode_var = self.__dict__.get("image_duration_var")
+            full_song = (
+                image_only
+                and duration_mode_var is not None
+                and duration_mode_var.get() == "Full song"
+            )
             if step_idx == 0:
-                run_step_0_audio_analysis(audio_path, slug, target_bpm=bpm, window_duration=duration, dry_run=dry_run, output_dir=output_dir)
+                if full_song:
+                    duration = _validate_duration(probe_media(audio_path)["duration"])
+                run_step_0_audio_analysis(
+                    audio_path,
+                    slug,
+                    target_bpm=bpm,
+                    window_duration=duration,
+                    dry_run=dry_run,
+                    output_dir=output_dir,
+                    full_song=full_song,
+                )
             elif step_idx == 1:
+                if image_only:
+                    raise ValueError(
+                        "Image-only mode preserves source image filenames; use the complete pipeline."
+                    )
                 selected_files = select_render_files(
                     renders_path, include_patterns, exclude_patterns
                 )
@@ -1393,9 +1688,15 @@ class HMSMasterGUI(tk.Tk):
             elif step_idx == 3:
                 run_step_3_sync_metadata(slug, output_dir)
             elif step_idx == 4:
+                extensions = IMAGE_EXTENSIONS if image_only else VIDEO_EXTENSIONS
                 selected_files = select_render_files(
-                    renders_path, include_patterns, exclude_patterns
+                    renders_path, include_patterns, exclude_patterns, extensions
                 )
+                if full_song:
+                    hook_file = _resolve_output_dir(output_dir) / f"{slug}_hooktimestamp.txt"
+                    duration = _validate_duration(
+                        float(hook_file.read_text(encoding="utf-8").splitlines()[2])
+                    )
                 run_step_4_generate_davinci_xml(
                     slug,
                     renders_path,
@@ -1410,6 +1711,10 @@ class HMSMasterGUI(tk.Tk):
             print(traceback.format_exc())
 
     def _verify_only_async(self):
+        mode_var = self.__dict__.get("media_mode_var")
+        image_only = mode_var is not None and mode_var.get() == "Image-only Lyric Video"
+        subtitles_var = self.__dict__.get("subtitles_var")
+        include_subtitles = subtitles_var is not None and subtitles_var.get()
         threading.Thread(
             target=self._verify_only_worker,
             args=(
@@ -1417,12 +1722,20 @@ class HMSMasterGUI(tk.Tk):
                 self.renders_var.get().strip(),
                 self.duration_var.get().strip(),
                 self.output_var.get().strip(),
+                image_only,
+                include_subtitles,
             ),
             daemon=True,
         ).start()
 
     def _verify_only_worker(
-        self, slug: str, renders_dir: str, duration: str, output_dir: str
+        self,
+        slug: str,
+        renders_dir: str,
+        duration: str,
+        output_dir: str,
+        image_only: bool = False,
+        include_subtitles: bool = False,
     ):
         try:
             verify_pipeline_outputs(
@@ -1430,6 +1743,8 @@ class HMSMasterGUI(tk.Tk):
                 renders_dir,
                 float(duration),
                 output_dir,
+                image_only,
+                include_subtitles,
             )
         except Exception as error:
             print(f"[ERROR] Verify-only failed: {error}")

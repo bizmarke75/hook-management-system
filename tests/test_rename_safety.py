@@ -16,6 +16,7 @@ from hms_master_gui import (
     natural_sort_key,
     run_step_1_shot_renamer,
     select_render_files,
+    write_srt_sidecar,
 )
 from hms_safety import (
     LEGACY_MASTER_AUDIO_SUFFIX,
@@ -82,6 +83,7 @@ class ShotRenameSafetyTests(unittest.TestCase):
                     "width": 1920,
                     "height": 1080,
                     "fps": "24",
+                    "duration": 12.0,
                 },
             ],
         ):
@@ -676,6 +678,206 @@ class ShotRenameSafetyTests(unittest.TestCase):
         from hms_v31_patcher import verify_davinci_xml
 
         self.assertTrue(verify_davinci_xml(str(xml_path)))
+
+
+class LyricImageVideoTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name).resolve()
+
+    def tearDown(self):
+        set_dry_run(False)
+        self.temp_dir.cleanup()
+
+    def test_image_selection_accepts_jpeg_and_png_only_when_requested(self):
+        renders = self.root / "renders"
+        renders.mkdir()
+        image_jpg = renders / "page-1.jpg"
+        image_png = renders / "page-2.png"
+        video = renders / "clip.mp4"
+        for path in (image_jpg, image_png, video):
+            path.write_bytes(b"media")
+
+        selected = select_render_files(
+            renders,
+            ["*.jpg", "*.png"],
+            extensions={".jpg", ".jpeg", ".png"},
+        )
+
+        self.assertEqual(selected, [image_jpg, image_png])
+        self.assertNotIn(video, selected)
+
+    def test_gui_image_picker_accepts_only_stills_in_the_selected_folder(self):
+        from hms_master_gui import HMSMasterGUI
+
+        class Value:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+            def set(self, value):
+                self.value = value
+
+        renders = self.root / "images"
+        renders.mkdir()
+        image = renders / "page.jpeg"
+        image.write_bytes(b"image")
+        gui = object.__new__(HMSMasterGUI)
+        gui.renders_var = Value(str(renders))
+        gui.include_var = Value("")
+        gui.media_mode_var = Value("Image-only Lyric Video")
+
+        with patch(
+            "hms_master_gui.filedialog.askopenfilenames",
+            return_value=[str(image)],
+        ):
+            gui._choose_render_clips()
+
+        self.assertEqual(gui.include_var.get(), "page.jpeg")
+
+    def test_image_timeline_generates_and_verifies_custom_duration(self):
+        from hms_v31_patcher import verify_davinci_xml
+
+        output = self.root / "output"
+        renders = self.root / "images"
+        output.mkdir()
+        renders.mkdir()
+        image = renders / "page.png"
+        image.write_bytes(b"image")
+        (output / f"track{MASTER_AUDIO_SUFFIX}").write_bytes(b"audio")
+        (output / "track_thebeats.txt").write_text("1.0\n", encoding="utf-8")
+        audio_metadata = {
+            "has_audio": True,
+            "duration": 10.0,
+            "samplerate": 48000,
+            "channels": 2,
+            "depth": 24,
+        }
+        image_metadata = {
+            "has_video": True,
+            "has_audio": False,
+            "duration": 0.0,
+            "width": 1280,
+            "height": 720,
+            "fps": None,
+            "samplerate": 44100,
+            "channels": 2,
+            "depth": 24,
+        }
+
+        with patch(
+            "hms_master_gui.probe_media",
+            side_effect=[audio_metadata, image_metadata],
+        ):
+            xml_path = run_step_4_generate_davinci_xml(
+                "track",
+                str(renders),
+                total_duration=10.0,
+                output_dir=output,
+                selected_files=[image],
+            )
+
+        root = ET.parse(xml_path).getroot()
+        image_clip = root.find("./sequence/media/video/track/clipitem")
+        self.assertEqual(image_clip.findtext("name"), "page.png")
+        self.assertEqual(image_clip.findtext("start"), "0")
+        self.assertEqual(image_clip.findtext("end"), "240")
+        self.assertTrue(verify_davinci_xml(str(xml_path)))
+
+    def test_srt_sidecar_is_clipped_and_retimed_for_hook(self):
+        source = self.root / "lyrics.srt"
+        source.write_text(
+            "1\n00:00:10,000 --> 00:00:12,000\nFirst line\n\n"
+            "2\n00:00:39,000 --> 00:00:42,000\nSecond line\n",
+            encoding="utf-8",
+        )
+        output = self.root / "output.srt"
+
+        write_srt_sidecar(source, output, start_seconds=11.0, duration_seconds=30.0)
+
+        self.assertEqual(
+            output.read_text(encoding="utf-8"),
+            "1\n00:00:00,000 --> 00:00:01,000\nFirst line\n\n"
+            "2\n00:00:28,000 --> 00:00:30,000\nSecond line\n",
+        )
+
+    def test_image_full_song_mode_uses_all_audio_without_renaming_stills(self):
+        renders = self.root / "images"
+        output = self.root / "output"
+        renders.mkdir()
+        output.mkdir()
+        image = renders / "comic-page.png"
+        image.write_bytes(b"image")
+        beats = output / "track_thebeats.txt"
+
+        def write_analysis_files(*args, output_dir=None, **kwargs):
+            output_path = Path(output_dir)
+            (output_path / "track_hooktimestamp.txt").write_text(
+                "0.000\n120.000\n120.000\n", encoding="utf-8"
+            )
+            (output_path / "track_thebeats.txt").write_text("", encoding="utf-8")
+
+        with (
+            patch(
+                "hms_master_gui.probe_media",
+                return_value={"has_audio": True, "duration": 120.0},
+            ),
+            patch("hms_master_gui.RollbackStore") as rollback_store,
+            patch(
+                "hms_master_gui.run_step_0_audio_analysis",
+                side_effect=write_analysis_files,
+            ) as analysis,
+            patch("hms_master_gui.run_step_1_shot_renamer") as renamer,
+            patch("hms_master_gui.run_step_2_audio_trimmer"),
+            patch("hms_master_gui.run_step_3_sync_metadata"),
+            patch(
+                "hms_master_gui.run_step_4_generate_davinci_xml",
+                return_value=output / "track_davinci_timeline.xml",
+            ) as xml_generator,
+        ):
+            rollback_store.return_value.begin_run.return_value = "run_001"
+            execute_pipeline(
+                "master.wav",
+                str(renders),
+                "track",
+                output_dir=output,
+                include_patterns=["*.png"],
+                image_only=True,
+                full_song=True,
+            )
+
+        analysis.assert_called_once()
+        self.assertEqual(analysis.call_args.kwargs["window_duration"], 120.0)
+        self.assertTrue(analysis.call_args.kwargs["full_song"])
+        renamer.assert_not_called()
+        self.assertEqual(xml_generator.call_args.kwargs["total_duration"], 120.0)
+        self.assertEqual(xml_generator.call_args.kwargs["selected_files"], [image])
+        self.assertTrue(image.is_file())
+        self.assertTrue(beats.is_file())
+
+    def test_rollback_restores_preexisting_subtitle_sidecar(self):
+        output = self.root / "output"
+        output.mkdir()
+        subtitle_file = output / "track_subtitles.srt"
+        subtitle_file.write_text("original\n", encoding="utf-8")
+        store = RollbackStore(root_dir=self.root)
+        run_id = store.begin_run(
+            "track",
+            "master.wav",
+            str(self.root),
+            output,
+        )
+        subtitle_file.write_text("generated\n", encoding="utf-8")
+        manifest = store._read_manifest(run_id)
+        manifest["status"] = "completed"
+        manifest["rename_state"] = "restored"
+        store._write_json(store._manifest_path(run_id), manifest)
+
+        store.restore_run(run_id)
+
+        self.assertEqual(subtitle_file.read_text(encoding="utf-8"), "original\n")
 
 
 if __name__ == "__main__":

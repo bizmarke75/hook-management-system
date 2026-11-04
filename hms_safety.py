@@ -12,6 +12,7 @@ from hms_manifest import ManifestStore
 _DRY_RUN = ContextVar("hms_dry_run", default=False)
 MASTER_AUDIO_SUFFIX = "_master_trimmed.wav"
 LEGACY_MASTER_AUDIO_SUFFIX = "_master_audio.wav"
+SUBTITLE_SUFFIX = "_subtitles.srt"
 
 
 def set_dry_run(enabled: bool) -> None:
@@ -60,6 +61,7 @@ class RollbackStore(ManifestStore):
         "_thebeats.txt",
         MASTER_AUDIO_SUFFIX,
         "_davinci_timeline.xml",
+        SUBTITLE_SUFFIX,
     )
 
     def begin_run(
@@ -199,15 +201,16 @@ class RollbackStore(ManifestStore):
         expected_names = {
             f"{slug}{suffix}"
             for suffix in self.OUTPUT_SUFFIXES
-            if suffix != MASTER_AUDIO_SUFFIX
+            if suffix not in (MASTER_AUDIO_SUFFIX, SUBTITLE_SUFFIX)
         }
         expected_names.add(manifest_wav)
+        allowed_names = expected_names | {f"{slug}{SUBTITLE_SUFFIX}"}
         declared_names = set()
         for entry in backed_up_outputs:
             if (
                 not isinstance(entry, dict)
                 or not isinstance(entry.get("name"), str)
-                or entry["name"] not in expected_names
+                or entry["name"] not in allowed_names
                 or entry["name"] in declared_names
                 or not isinstance(entry.get("existed_before"), bool)
             ):
@@ -217,7 +220,7 @@ class RollbackStore(ManifestStore):
             declared_names.add(entry["name"])
             if entry["existed_before"] and entry.get("backup") != f"backups/{entry['name']}":
                 raise ValueError("Restore blocked. Output backup path is unsafe.")
-        if declared_names != expected_names:
+        if not expected_names.issubset(declared_names):
             raise ValueError("Restore blocked. Output backup manifest is incomplete.")
         missing_backups = [
             run_dir / "backups" / entry["name"]

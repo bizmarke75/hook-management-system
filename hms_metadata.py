@@ -61,6 +61,12 @@ def probe_media(path: str | Path) -> dict:
                     break
             except (ValueError, ZeroDivisionError):
                 continue
+        if video_fps is None and media_path.suffix.lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+        }:
+            video_fps = "24/1"
         if video_fps is None:
             raise ValueError(f"ffprobe did not report a valid video frame rate for {media_path}.")
 
